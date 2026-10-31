@@ -78,9 +78,9 @@ connected to. Without mods, those commands ask Claude to use the skill, and
 the plugin's monitor delivers the handoffs. Where plugin monitors don't run
 either, as in the Claude desktop app, the skill starts a Monitor for them and
 starts it again each time Claude Code stops it after 30 minutes. Without the mod,
-the session needs Claude Code monitors: they don't run when `DISABLE_TELEMETRY` or
-`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is set, or on Amazon Bedrock, Google
-Cloud's Agent Platform or Microsoft Foundry. If handoffs stop arriving, run
+the session needs Claude Code monitors: before Claude Code 2.1.310 they don't run
+when `DISABLE_TELEMETRY` or `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is set, or on
+Amazon Bedrock, Google Cloud's Agent Platform or Microsoft Foundry. If handoffs stop arriving, run
 `/blixel:connect` again. With Claude Code's Bash sandbox on, add the socket
 path that `blixel agent connect` reports to `sandbox.network.allowUnixSockets`.
 
@@ -108,6 +108,10 @@ together, or users of one platform keep the old skill.
 
 `hooks/register.tsx` is the mod; `claude plugin test .` runs its tests in `tests/`,
 and `claude plugin validate .` checks it the way Claude Code loads it.
+`tests/session-start.sh` tests the hook that runs after `/clear` or a compaction.
+
+`skills/connect-agent/SKILL.md` holds what every agent shares; each agent's part is
+in `references/`, the file `blixel agent whoami` names.
 
 `skills/blixel/scripts/blixel` and `skills/connect-agent/scripts/blixel` are the
 same script, so each skill works installed on its own; change them together.
