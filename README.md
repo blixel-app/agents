@@ -90,40 +90,49 @@ Installed as a skill only (`npx skills add`), connecting still works, but after 
 
 In Codex, trust the plugin's hooks when Codex asks at start, or later in `/hooks`,
 and again after an update that changes them: without them no handoff arrives. Then
-type `connect blixel` as a prompt of its own, or `connect blixel ask` or `connect
-blixel direct` to choose whether Blixel asks you before each handoff. It connects
-without calling a model. The hooks follow the thread and queue each handoff into it
-with `codex queue`, and Codex runs it after any turn in progress. You can also ask
-the session to connect to the Blixel call; Codex's sandbox blocks Blixel's local
-socket, so approve running `blixel agent` outside the sandbox when Codex asks; if it
-can't ask, run `/permissions` and choose Approve for me. A plain `codex` session runs
-on Codex's shared app-server, where a handoff still runs after you close its
-terminal, so ask the session to disconnect before you close it. After `/new` or
-`/resume`, handoffs stay with the conversation that connected, as Codex tells you:
-connect from the new one to move them.
+pick `$blixel:connect` (type `$con`, then Enter twice), with `ask` or `direct` after
+it to choose whether Blixel asks you before each handoff. Typing `connect blixel`,
+`blixel connect` or `blixel:connect` as a prompt of its own does the same, and
+`$blixel:status` and `$blixel:disconnect` check and disconnect. None of these calls a
+model. Nothing runs for Blixel in a session until you connect it or ask it to, beyond
+a filter of about 6 ms on each prompt and shell command, and everything stops when
+the connection ends. The hooks follow the thread and queue each handoff into it with
+`codex queue`, and Codex runs it after any turn in progress. You can also ask the
+session to connect to the Blixel call; Codex's sandbox blocks Blixel's local socket,
+so approve running `blixel agent` outside the sandbox when Codex asks; if it can't
+ask, run `/permissions` and choose Approve for me. If you take over 2 minutes to
+approve, connect again. A plain `codex` session runs on Codex's shared app-server,
+where a handoff still runs after you close its terminal, so ask the session to
+disconnect before you close it. After `/new` or `/resume`, handoffs stay with the
+conversation that connected: `$blixel:status` says so, and connecting from the new
+one moves them.
 
 ## Releasing
 
-Each platform has its own manifests, and both point at the same `skills/`:
+Each platform has its own manifests. Claude Code's plugin is this repository;
+Codex's is `codex/`, because Codex asks its users to trust hooks again when anything
+in its plugin's root changes, and a change to the mod must not do that:
 
 | | Marketplace | Plugin |
 | --- | --- | --- |
 | Claude Code | `.claude-plugin/marketplace.json` | `.claude-plugin/plugin.json` |
-| Codex | `.agents/plugins/marketplace.json` | `.codex-plugin/plugin.json` |
+| Codex | `.agents/plugins/marketplace.json` | `codex/.codex-plugin/plugin.json` |
 
-Installs are cached by `version`, so raise it in both `plugin.json` files
-together, or users of one platform keep the old skill.
+Installs are cached by `version`, so raise each `plugin.json` whose plugin changed, or
+its users keep the old one. Leave Codex's alone unless something in `codex/` changed,
+a skill's copy included: raising it makes Codex ask to trust the hooks again.
 
 `hooks/register.tsx` is the mod; `claude plugin test .` runs its tests in `tests/`,
 and `claude plugin validate .` checks it the way Claude Code loads it.
 `tests/session-start.sh` tests the hook that runs after `/clear` or a compaction,
 `tests/connect.sh` the scripts behind `/blixel:connect`, and `tests/codex-hooks.sh`
-Codex's hooks in `codex/`. That folder has its own `hooks.json`, named from
-`.codex-plugin/plugin.json`, because `hooks/hooks.json` is the mod's module list.
-Changing a hook or a script it runs makes Codex ask its users to trust it again.
-Hooks run outside Codex's sandbox, so they ignore the session's PATH and take the CLI
-inside Blixel.app; `BLIXEL_HOOK_PATH`, set where Codex starts, replaces their PATH to
-test a development build.
+Codex's hooks in `codex/`. `codex/skills/` is a copy of `skills/`, as Codex drops
+symlinks when it installs a plugin: run `scripts/codex-skills.sh` after changing a
+skill, and the test fails if you don't. `codex/codex-skills/` holds what Codex alone
+lists, the skills behind `$blixel:connect` and the rest. Hooks run outside Codex's sandbox, so they ignore the session's PATH and take the CLI inside Blixel.app,
+and each filter in `codex/hooks.json` names its commands by full path;
+`BLIXEL_HOOK_PATH`, set where Codex starts, replaces their PATH to test a development
+build.
 
 `skills/connect-agent/SKILL.md` holds what every agent shares; each agent's part is
 in `references/`, the file a failed `blixel agent connect` names.

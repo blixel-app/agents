@@ -1,0 +1,30 @@
+#!/bin/sh
+# Runs the blixel CLI without it being installed on PATH: the first blixel on
+# PATH that isn't a copy of this script, else the one inside Blixel.app.
+here=$(cd "$(dirname "$0")" && pwd -P)
+# Every copy of this script adds its directory, so two copies on PATH can't
+# exec each other forever.
+BLIXEL_SHIM_DIRS="$here:${BLIXEL_SHIM_DIRS-}"
+export BLIXEL_SHIM_DIRS
+
+oldifs=$IFS
+IFS=:
+for dir in $PATH; do
+	[ -n "$dir" ] && [ -f "$dir/blixel" ] && [ -x "$dir/blixel" ] || continue
+	real=$(cd "$dir" && pwd -P) || continue
+	case ":$BLIXEL_SHIM_DIRS" in *":$real:"*) continue ;; esac
+	exec "$dir/blixel" "$@"
+done
+IFS=$oldifs
+
+for app in /Applications/Blixel.app "$HOME/Applications/Blixel.app"; do
+	cli="$app/Contents/Resources/bin/blixel"
+	[ -x "$cli" ] && exec "$cli" "$@"
+done
+app=$(mdfind "kMDItemCFBundleIdentifier == 'app.blixel.Blixel'" 2>/dev/null | while read -r app; do
+	[ -x "$app/Contents/Resources/bin/blixel" ] && { echo "$app"; break; }
+done)
+[ -n "$app" ] && exec "$app/Contents/Resources/bin/blixel" "$@"
+
+echo "Blixel isn't installed. Get it at https://blixel.app" >&2
+exit 127

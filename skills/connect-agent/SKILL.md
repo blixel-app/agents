@@ -53,10 +53,10 @@ or pause that task first.
 The first stderr line of `blixel agent connect` is a `request_id` event. On success stdout has one JSON line;
 tell the user this session is connected to the meeting and handoffs from people in
 it will arrive here. If `data.replaced` is set, another session was connected and
-no longer receives them: a meeting has one connected session. If
-`data.codex_shared_app_server` is true, also tell the user that this thread runs on
-Codex's shared app-server, so a handoff still runs in it after they close this
-terminal: ask this session to disconnect first.
+no longer receives them: a meeting has one connected session. In Codex, also tell
+the user that unless this session was started with `--no-daemon`, it runs on Codex's
+shared app-server, so a handoff still runs in it after they close this terminal: ask
+this session to disconnect first.
 
 On failure, stderr ends with `{"error":{"code",…}}`. This agent's file comes first;
 then, by `code`:
