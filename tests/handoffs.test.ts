@@ -191,18 +191,21 @@ test('a handoff printed without an id runs, with nothing to ack', async ($, on) 
   expect(stub.acks()).toEqual([])
 })
 
-const refusedSave = (ack: Ran) => ({
+const refusedSave = (ack: (args: readonly string[]) => Ran | Promise<Ran>) => ({
   printed: [printed('Rename the flag', 'Ana', 7) + printed('And run it', 'Bea', 8)],
   saveFails: true,
-  cli: (command: string): Ran =>
-    command === 'ack' ? ack : { exitCode: 0, stdout: command === 'status' ? status({}) : current() },
+  cli: (command: string, args: readonly string[]) =>
+    command === 'ack' ? ack(args) : { exitCode: 0, stdout: command === 'status' ? status({}) : current() },
 })
 
 test('handoffs that cannot be saved are acked as failed and never run', async ($, on) => {
-  const answer = JSON.stringify({ data: { outcome: 'recorded', handoff_id: 7 } })
-  const stub = stage(on, refusedSave({ exitCode: 0, stdout: answer }))
+  const recorded = { exitCode: 0, stdout: JSON.stringify({ data: { outcome: 'recorded' } }) }
+  // The first answer lands while the second handoff could still be picked up.
+  const stub = stage(on, refusedSave(([id]) => (id === '7' ? recorded : stub.clock.sleep(1_000).then(() => recorded))))
 
   await start($)
+  await stub.settle()
+  await stub.clock.advance(1_000)
   await stub.settle()
 
   expect(stub.acks().map(ack => ack.slice(0, 3))).toEqual([['7', 'failed', '--reason'], ['8', 'failed', '--reason']])
@@ -211,7 +214,7 @@ test('handoffs that cannot be saved are acked as failed and never run', async ($
 })
 
 test('a handoff that cannot be saved still runs when the app did not take its failed ack', async ($, on) => {
-  const stub = stage(on, refusedSave({ exitCode: 5, stderr: '{"error":{"code":"incompatible_protocol","message":"No"}}\n' }))
+  const stub = stage(on, refusedSave(() => ({ exitCode: 5, stderr: '{"error":{"code":"incompatible_protocol","message":"No"}}\n' })))
 
   await start($)
   await stub.settle()
