@@ -6,19 +6,13 @@ runs as a turn of its own, after the current one.
 ## Running `blixel agent`
 
 `blixel agent connect` must run outside Codex's sandbox: Blixel refuses a connect
-from inside it. Request escalated permissions for that one command, saying it
-connects to the Blixel app on this Mac. Do the same for `blixel agent status` and
-`blixel agent disconnect` unless they already work where you are: Codex's sandbox
-blocks Blixel's local socket unless its network is on. `blixel agent whoami` works
-inside it.
+from inside it. Request escalated permissions for it, as the skill says. Do the same
+for `blixel agent status` and `blixel agent disconnect` unless they already work
+where you are: Codex's sandbox blocks Blixel's local socket unless its network is on.
 
 ## Connect
 
-`blixel agent connect` connects this Codex thread (`CODEX_THREAD_ID`). Report
-success and `data.replaced` as the skill says. If `data.codex_shared_app_server` is
-true, also tell the user that this thread runs on Codex's shared app-server, so a
-handoff still runs in it after they close this terminal: ask this session to
-disconnect first.
+`blixel agent connect` connects this Codex thread (`CODEX_THREAD_ID`).
 
 On failure, by `code`:
 

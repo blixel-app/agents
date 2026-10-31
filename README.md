@@ -74,8 +74,8 @@ disconnect without asking Claude, and the Blixel pane, which `/blixel:status`
 opens (and, in the desktop app, connecting), shows the meeting and the handoffs
 it sent this session, each with who sent it. The status line names the meeting
 too, and points to `/blixel:connect` while Blixel is in one this session is not
-connected to. Without mods, those commands ask Claude to use the skill, and
-the plugin's monitor delivers the handoffs. Where plugin monitors don't run
+connected to. Without mods, `/blixel:connect` connects before Claude answers, the other two
+commands ask Claude to use the skill, and the plugin's monitor delivers the handoffs. Where plugin monitors don't run
 either, as in the Claude desktop app, the skill starts a Monitor for them and
 starts it again each time Claude Code stops it after 30 minutes. Without the mod,
 the session needs Claude Code monitors: before Claude Code 2.1.310 they don't run
@@ -108,10 +108,14 @@ together, or users of one platform keep the old skill.
 
 `hooks/register.tsx` is the mod; `claude plugin test .` runs its tests in `tests/`,
 and `claude plugin validate .` checks it the way Claude Code loads it.
-`tests/session-start.sh` tests the hook that runs after `/clear` or a compaction.
+`tests/session-start.sh` tests the hook that runs after `/clear` or a compaction,
+and `tests/connect.sh` the scripts behind `/blixel:connect`.
 
 `skills/connect-agent/SKILL.md` holds what every agent shares; each agent's part is
-in `references/`, the file `blixel agent whoami` names.
+in `references/`, the file a failed `blixel agent connect` names.
+
+Connecting takes at most one model step before `blixel agent connect`. Each release
+compares real connect times with the last one.
 
 `skills/blixel/scripts/blixel` and `skills/connect-agent/scripts/blixel` are the
 same script, so each skill works installed on its own; change them together.
