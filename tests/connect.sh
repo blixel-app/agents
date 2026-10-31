@@ -77,6 +77,10 @@ tells "monitors" "$whens" "on-skill-invoke:blixel:connect-agent"
 tells "monitors" "$whens" "on-skill-invoke:blixel:connect "
 grep -q '^disable-model-invocation: true$' "$root/commands/connect.md" ||
 	fail "a model reaches /blixel:connect's shell without the hook"
+# What the rules printed after a failed connect tell the model to run next.
+allowed=$(sed -n 's/^allowed-tools: //p' "$root/commands/connect.md")
+tells "allowed tools" "$allowed" "Bash(blixel agent connect*)"
+tells "allowed tools" "$allowed" "Bash(blixel agent follow)"
 
 [ "$failed" = 0 ] && echo "connect: pass"
 exit "$failed"
