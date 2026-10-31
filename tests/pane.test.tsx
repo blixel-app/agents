@@ -317,6 +317,31 @@ test('a handoff whose sender has no name leads with its time, on every surface',
   }
 })
 
+test('after /clear empties $.state the pane shows the connection again within a second', async ($, on) => {
+  const cli = connectedCli()
+  const stub = stage(on, { isLive: true, cli: command => cli.answer(command) })
+  // What the engine does to $.state on a /clear; a test cannot write it itself.
+  let isCleared = false
+  on('session.end', () => {
+    isCleared = true
+    return { sessionId: 'session-2' }
+  })
+  on('state.get', ($, e, next) => (isCleared && e.key === 'panel' ? { value: { version: 0 } } : next(e)))
+  on('state.set', ($, e, next) => {
+    if (e.key === 'panel') isCleared = false
+    return next(e)
+  })
+
+  await connectSession($, stub)
+  await $.session.end({ reason: 'clear' } as never)
+  await stub.clock.advance(1_000)
+  await stub.settle()
+
+  const ui = await $.ui.mount(pane('terminal'))
+  expect(await ui.find({ type: 'Text', text: /Connected to Design sync/ })).toBeDefined()
+  await ui.unmount()
+})
+
 test('a reload keeps the listed handoffs while the session stays in their meeting', async ($, on) => {
   const listed = { n: 1, text: 'Rename the flag', sender: 'Ana', at: 0, state: 'delivered' }
   seedPanel(on, {

@@ -16,6 +16,7 @@ type Session = {
   status: () => Promise<string>
   deliver: () => Promise<void>
   refresh: () => Promise<Answer>
+  show: () => void
   ownsHandoffs: () => boolean
   connecting: () => Promise<(() => void) | undefined>
   follow: () => Promise<void>
@@ -48,6 +49,8 @@ const POLL_MS = 15_000
 const IDLE_POLLS = 4
 // How long loading the skill waits for the mod's follower to attach.
 const ATTACH_MS = 2_000
+// A /clear empties $.state just after session.end's hooks return.
+const CLEARED_MS = 1_000
 // After the user stops a turn, Claude Code drops the queued prompt and
 // refuses new ones until the user's next input.
 const STOPPED = ['the session was stopped and nobody has sent input since', 'was removed from the queue before it ran']
@@ -515,6 +518,7 @@ export const register: Register = on => {
 
       deliver,
       refresh,
+      show,
       ownsHandoffs: () => key !== '' && attachment !== 'refused',
       connecting,
       follow: async () => {
@@ -748,7 +752,11 @@ export const register: Register = on => {
 
   // `clear` and `resume` go on in the same process, with the same queue.
   on('session.end', async ($, e, next) => {
-    if (e.reason !== 'clear' && e.reason !== 'resume') await session?.forget()
-    return next(e)
+    const goesOn = e.reason === 'clear' || e.reason === 'resume'
+    if (!goesOn) await session?.forget()
+    const ended = await next(e)
+    // A reload learns from $.state that this session is connected.
+    if (goesOn) $.clock.after(CLEARED_MS, () => session?.show())
+    return ended
   })
 }
