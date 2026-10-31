@@ -456,6 +456,17 @@ never "a quit session's state" "$(ls "$dir/data")" "$other"
 never "a quit session's state" "$(ls "$dir/data")" "queued.old"
 leaves 0
 
+# Past the filter's limit `exec` would fail, and the hook with it.
+reset
+mkdir "$dir/data/$thread"
+echo "$$" >"$dir/data/$thread/connected"
+python3 -c 'import sys; print("{\"session_id\":\"%s\",\"prompt\":\"%s\",\"tool_input\":{\"command\":\"blixel agent connect\"}}" % (sys.argv[1], "x" * 1200000), end="")' "$thread" >"$dir/typed"
+for command in "$connects" "$restarts" "$tool"; do
+	said=$("$dir/host" "$command" "$dir/typed" 2>&1) || fail "a huge prompt failed its hook"
+	silent "a huge prompt" "$said"
+done
+silent "a huge prompt" "$(cat "$log")"
+
 # The relay's stderr has no reader, and a relay's streams must not hold Codex's.
 reset
 relay_for "connect blixel"

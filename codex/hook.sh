@@ -4,6 +4,8 @@
 # filters in hooks.json too. Spotlight goes for the same reason, as a workspace can
 # hold a bundle with Blixel's id. BLIXEL_HOOK_PATH is for tests and development
 # builds. A hook gets the environment of Codex itself, so sandboxed code cannot set it.
+# The input comes as a variable, as a filter has read stdin; each filter stops at 200,000
+# characters, well past any handoff, because `exec` fails near 1 MB of environment.
 export PATH="${BLIXEL_HOOK_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}"
 export BLIXEL_SHIM_NO_SEARCH=1
 input=$BLIXEL_HOOK_INPUT

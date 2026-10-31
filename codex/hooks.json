@@ -5,11 +5,11 @@
         "hooks": [
           {
             "type": "command",
-            "command": "i=$(/bin/cat); s=${i#*\\\"session_id\\\":\\\"}; s=${s%%\\\"*}; case $i in *'\"prompt\":\"$blixel:'* | *'\"prompt\":\"'[Cc][Oo][Nn][Nn][Ee][Cc][Tt]' '[Bb][Ll][Ii][Xx][Ee][Ll]* | *'\"prompt\":\"'[Bb][Ll][Ii][Xx][Ee][Ll][' :'][Cc][Oo][Nn][Nn][Ee][Cc][Tt]*) ;; *) [ -d \"$PLUGIN_DATA/$s\" ] || exit 0 ;; esac; BLIXEL_HOOK_INPUT=$i exec \"$PLUGIN_ROOT/prompt.sh\""
+            "command": "i=$(/bin/cat); s=${i#*\\\"session_id\\\":\\\"}; s=${s%%\\\"*}; case $i in *'\"prompt\":\"$blixel:'* | *'\"prompt\":\"'[Cc][Oo][Nn][Nn][Ee][Cc][Tt]' '[Bb][Ll][Ii][Xx][Ee][Ll]* | *'\"prompt\":\"'[Bb][Ll][Ii][Xx][Ee][Ll][' :'][Cc][Oo][Nn][Nn][Ee][Cc][Tt]*) ;; *) [ -d \"$PLUGIN_DATA/$s\" ] || exit 0 ;; esac; [ ${#i} -lt 200000 ] || exit 0; BLIXEL_HOOK_INPUT=$i exec \"$PLUGIN_ROOT/prompt.sh\""
           },
           {
             "type": "command",
-            "command": "i=$(/bin/cat); s=${i#*\\\"session_id\\\":\\\"}; s=${s%%\\\"*}; case $i in *'\"prompt\":\"$blixel:connect'* | *'\"prompt\":\"'[Cc][Oo][Nn][Nn][Ee][Cc][Tt]' '[Bb][Ll][Ii][Xx][Ee][Ll]* | *'\"prompt\":\"'[Bb][Ll][Ii][Xx][Ee][Ll][' :'][Cc][Oo][Nn][Nn][Ee][Cc][Tt]*) ;; *) [ -e \"$PLUGIN_DATA/$s/connected\" ] || exit 0 ;; esac; BLIXEL_HOOK_INPUT=$i exec \"$PLUGIN_ROOT/relay.sh\"",
+            "command": "i=$(/bin/cat); s=${i#*\\\"session_id\\\":\\\"}; s=${s%%\\\"*}; case $i in *'\"prompt\":\"$blixel:connect'* | *'\"prompt\":\"'[Cc][Oo][Nn][Nn][Ee][Cc][Tt]' '[Bb][Ll][Ii][Xx][Ee][Ll]* | *'\"prompt\":\"'[Bb][Ll][Ii][Xx][Ee][Ll][' :'][Cc][Oo][Nn][Nn][Ee][Cc][Tt]*) ;; *) [ -e \"$PLUGIN_DATA/$s/connected\" ] || exit 0 ;; esac; [ ${#i} -lt 200000 ] || exit 0; BLIXEL_HOOK_INPUT=$i exec \"$PLUGIN_ROOT/relay.sh\"",
             "async": true,
             "timeout": 2592000
           }
@@ -22,7 +22,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "i=$(/bin/cat); case $i in *'blixel agent connect'* | *'blixel\\\" agent connect'* | *\"blixel' agent connect\"*) BLIXEL_HOOK_INPUT=$i exec \"$PLUGIN_ROOT/relay.sh\" ;; esac",
+            "command": "i=$(/bin/cat); case $i in *'blixel agent connect'* | *'blixel\\\" agent connect'* | *\"blixel' agent connect\"*) [ ${#i} -lt 200000 ] || exit 0; BLIXEL_HOOK_INPUT=$i exec \"$PLUGIN_ROOT/relay.sh\" ;; esac",
             "async": true,
             "timeout": 2592000
           }
