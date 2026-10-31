@@ -1,6 +1,6 @@
 {
   "name": "blixel",
-  "version": "0.7.0",
+  "version": "0.8.0",
   "description": "Rooms, meeting chat, window sharing, transcripts, hooks and agent handoffs through the blixel CLI.",
   "author": {
     "name": "Blixel",
@@ -16,6 +16,7 @@
     "screen sharing"
   ],
   "skills": "./skills/",
+  "hooks": "./codex/hooks.json",
   "interface": {
     "displayName": "Blixel",
     "shortDescription": "Rooms, meeting chat, transcripts, hooks and handoffs",

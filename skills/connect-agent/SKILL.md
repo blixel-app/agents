@@ -15,8 +15,8 @@ that meeting can then speak or type a request to this session from Blixel.
 To connect, run `blixel agent connect` now, with no flags and nothing before it. In
 Codex, always run it with `sandbox_permissions: "require_escalated"`,
 `prefix_rule: ["blixel", "agent", "connect"]` and the justification "Connect this
-thread to the Blixel app on this Mac", because Blixel refuses a connect from inside
-Codex's sandbox.
+thread to the Blixel app on this Mac", because Codex's sandbox blocks Blixel's local
+socket.
 
 If the shell can't find `blixel` (`command not found`), run `scripts/blixel` beside
 this file wherever these files say `blixel` from then on: it runs the CLI inside the
