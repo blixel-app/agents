@@ -160,7 +160,7 @@ export const register: Register = on => {
         // inherits its parent's: the mod's processes are children of this
         // session's own `claude`, the process the app checks callers against.
         const probe = await $.process
-          .run(['/bin/sh', '-c', 'echo "$PPID"; ps -o lstart= -p "$PPID"'])
+          .run(['/bin/sh', '-c', 'echo "$PPID"; exec ps -o lstart= -p "$PPID"'])
           .catch(() => undefined)
         const [pidText = '', startedAt = ''] = probe?.stdout.split('\n') ?? []
         pid = Number(pidText.trim())
