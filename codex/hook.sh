@@ -18,6 +18,10 @@ blixel=$PLUGIN_ROOT/skills/connect-agent/scripts/blixel
 # one that did with a single `test`. `connected` means a relay belongs here.
 state=$PLUGIN_DATA/$session
 
+# It names the Codex process, as a connection ends with that: a thread resumed in
+# another has nothing to bring back.
+connected() { [ "$(cat "$state/connected" 2>/dev/null)" = "$PPID" ]; }
+
 field() { # key path, JSON
 	printf '%s' "$2" | plutil -extract "$1" raw -o - - 2>/dev/null
 }

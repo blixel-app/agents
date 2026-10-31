@@ -61,7 +61,7 @@ refused() { # what failed
 
 connect() {
 	# Tells relay.sh, running beside this hook, that this prompt is a connect.
-	if [ ! -e "$state/connected" ]; then
+	if ! connected; then
 		mkdir -p "$state"
 		: >"$state/connecting"
 	fi

@@ -125,16 +125,17 @@ prompt() {
 	"$dir/host" "$connects" "$dir/typed"
 }
 
+# These two run their hooks from this shell, as one Codex process runs a session's.
 relay_for() { # the same, through both handlers, side by side as Codex runs them
 	typed "$@" >"$dir/asked"
-	"$dir/host" "$connects" "$dir/asked" >/dev/null &
-	"$dir/host" "$restarts" "$dir/asked" &
+	PATH=${SESSION_PATH:-$PATH} /bin/zsh -c "$connects" <"$dir/asked" >/dev/null &
+	PATH=${SESSION_PATH:-$PATH} /bin/zsh -c "$restarts" <"$dir/asked" &
 	host=$!
 }
 
 bash_call() { # the Bash command, escaped for JSON; the thread
 	ran "$@" >"$dir/ran"
-	"$dir/host" "$tool" "$dir/ran" &
+	PATH=${SESSION_PATH:-$PATH} /bin/zsh -c "$tool" <"$dir/ran" &
 	host=$!
 }
 
@@ -341,7 +342,7 @@ reset
 for words in "connect blixel" '$blixel:connect' "Blixel Connect direct" "blixel:connect ask"; do
 	relay_for "$words"
 	started "$words"
-	tells "the session's own" "$(cat "$log")" "pid=$(cat "$dir/asked.host") key=$thread provider=codex name=Codex thread= input="
+	tells "the session's own" "$(cat "$log")" "pid=$$ key=$thread provider=codex name=Codex thread= input="
 	leaves 0
 	: >"$log"
 done
@@ -402,6 +403,24 @@ relay_for "connect blixel"
 started "a connect"
 leaves 5
 restarted "another follower keeps the marker"
+
+# A connection ends with its Codex process, which can quit with no chance to clear this.
+reset
+mkdir "$dir/data/$thread"
+echo 1 >"$dir/data/$thread/connected"
+typed "fix the build" >"$dir/asked"
+/bin/zsh -c "$restarts" <"$dir/asked" &
+host=$!
+until_true "a thread resumed in another process" stopped "$host"
+silent "a thread resumed in another process runs nothing" "$(cat "$log")"
+silent "a thread resumed in another process drops its state" "$(ls "$dir/data")"
+
+mkdir "$dir/data/$thread"
+echo 1 >"$dir/data/$thread/connected"
+relay_for "connect blixel"
+started "a resumed thread connects"
+[ "$(cat "$dir/data/$thread/connected")" = $$ ] || fail "the marker names another process"
+leaves 0
 
 for status in 0 2 4; do
 	reset

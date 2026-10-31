@@ -25,15 +25,21 @@ asked_to_connect() {
 	rm -f "$state/connecting"
 }
 
+leave() {
+	rm -f "$state/connected"
+	rmdir "$state" 2>/dev/null
+	exit 0
+}
+
 # A killed relay leaves `connected`, so the next prompt brings it back.
-if [ ! -e "$state/connected" ]; then
+if ! connected; then
 	case $input in
-	*'"tool_input":'*) runs_connect || exit 0 ;;
-	*) asked_to_connect || exit 0 ;;
+	*'"tool_input":'*) runs_connect || leave ;;
+	*) asked_to_connect || leave ;;
 	esac
 fi
 mkdir -p "$state"
-: >"$state/connected"
+echo "$PPID" >"$state/connected"
 cd "$HOME" || exit 0
 # Quitting Codex kills a relay's host before it can clean up after itself.
 find "$PLUGIN_DATA" -mindepth 1 -mtime +30 -delete
@@ -45,7 +51,4 @@ find "$PLUGIN_DATA" -mindepth 1 -mtime +30 -delete
 ended=$?
 # 5 is another follower, which is no sign of a healthy one, and over 128 a killed
 # relay. Past those there is nothing for a prompt to bring back.
-[ "$ended" = 5 ] || [ "$ended" -gt 128 ] || {
-	rm -f "$state/connected"
-	rmdir "$state" 2>/dev/null
-}
+[ "$ended" = 5 ] || [ "$ended" -gt 128 ] || leave
