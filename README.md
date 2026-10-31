@@ -119,6 +119,9 @@ and `claude plugin validate .` checks it the way Claude Code loads it.
 Codex's hooks in `codex/`. That folder has its own `hooks.json`, named from
 `.codex-plugin/plugin.json`, because `hooks/hooks.json` is the mod's module list.
 Changing a hook or a script it runs makes Codex ask its users to trust it again.
+Hooks run outside Codex's sandbox, so they ignore the session's PATH and take the CLI
+inside Blixel.app; `BLIXEL_HOOK_PATH`, set where Codex starts, replaces their PATH to
+test a development build.
 
 `skills/connect-agent/SKILL.md` holds what every agent shares; each agent's part is
 in `references/`, the file a failed `blixel agent connect` names.

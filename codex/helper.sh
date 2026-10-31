@@ -3,13 +3,7 @@
 # hook because a hook is outside Codex's sandbox and knows the session; 30 days
 # is its limit in hooks.json, as Codex kills a hook at its limit, by default 10
 # minutes. Each prompt starts it again, so a helper that died comes back.
-input=$(cat)
-session=${input#*\"session_id\":\"}
-session=${session%%\"*}
-case $session in '' | *[!0-9a-f-]*) exit 0 ;; esac
-export BLIXEL_AGENT_PID=$PPID BLIXEL_AGENT_SESSION_KEY=$session
-export BLIXEL_AGENT_PROVIDER=codex BLIXEL_AGENT_NAME=Codex
-blixel=$PLUGIN_ROOT/skills/connect-agent/scripts/blixel
+. "$PLUGIN_ROOT/codex/hook.sh"
 agent=$PPID
 helper=$$
 lock=$PLUGIN_DATA/helper.$session
@@ -37,16 +31,19 @@ claim() {
 }
 
 claim || exit 0
-trap 'rm -f "$lock" "$PLUGIN_DATA/queued.$session".*' EXIT
-# Quitting Codex kills a helper before it can clean up after itself.
+trap 'rm -f "$lock"' EXIT
+# Quitting Codex kills a helper before it can clean up after itself. Markers stay
+# past a helper anyway: Codex may still hold what they mark, and without one a
+# handoff that says the phrase reads as typed.
 find "$PLUGIN_DATA" ! -type d -mtime +30 -delete
 
 # An app without acks queues into the thread itself.
 "$blixel" agent follow --help 2>/dev/null | grep -q -e --acks || exit 0
 
-# The session's own, so the same version and CODEX_HOME answer.
-codex=$(ps -o comm= -p "$agent" 2>/dev/null)
-case $codex in */codex) [ -x "$codex" ] || codex=codex ;; *) codex=codex ;; esac
+# The session's own, so the same version and CODEX_HOME answer: its image, as `ps`
+# gives what it was started as, often a bare name.
+codex=$(lsof -a -p "$agent" -d txt -Fn 2>/dev/null | sed -n '/^n/{s///p;q;}')
+case $codex in */codex) ;; *) codex=codex ;; esac
 
 field() { # name, handoff
 	printf '%s' "$2" | plutil -extract "$1" raw -o - - 2>/dev/null
@@ -55,7 +52,7 @@ field() { # name, handoff
 queue() { # text; `=` keeps text that starts with - from reading as an option
 	"$codex" queue --thread="$session" --message="$1" </dev/null 2>&1 &
 	pid=$!
-	{ sleep 30; kill "$pid"; } >/dev/null 2>&1 &
+	{ sleep 30; kill "$pid"; sleep 2; kill -9 "$pid"; } >/dev/null 2>&1 &
 	timer=$!
 	wait "$pid"
 	status=$?
@@ -69,7 +66,7 @@ deliver() { # handoff
 	id=$(field id "$1") || return 0
 	text=$(field message "$1") || text=$(field prompt "$1")
 	# Tells prompt.sh this prompt is a handoff. A hash, so no text is on disk.
-	mark=$PLUGIN_DATA/queued.$session.$(printf '%s' "$text" | /sbin/md5 -q).$id
+	mark=$PLUGIN_DATA/queued.$session.$(printf '%s' "$text" | md5 -q).$id
 	: >"$mark"
 	said=$(queue "$text")
 	status=$?

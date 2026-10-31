@@ -8,6 +8,7 @@ failed=0
 thread=01a19327-87e5-71b0-838d-13985efedb4a
 other=01a19327-b6e5-7282-b42a-fa627ce665f4
 export PLUGIN_ROOT=$root PLUGIN_DATA=$dir/data HOME=$dir PATH="$dir:/usr/bin:/bin"
+export BLIXEL_HOOK_PATH="$dir:/usr/bin:/bin:/usr/sbin:/sbin"
 log=$dir/log
 
 # `blixel` logs each run with the session it claims. `agent follow --json
@@ -24,7 +25,7 @@ case "\$*" in
 	exec /bin/sleep 300 ;;
 "agent status") cat "\$dir/status" ;;
 "agent connect"*)
-	if [ -f "\$dir/old" ] && [ -z "\$CODEX_THREAD_ID" ]; then
+	if [ -f "\$dir/old" ]; then
 		echo '{"error":{"code":"not_in_agent_session","message":"Not a session"}}' >&2
 		exit 2
 	fi
@@ -41,10 +42,15 @@ for a in "\$@"; do printf '[%s] ' "\$a"; done >>"\$dir/log"
 echo >>"\$dir/log"
 . "\$dir/codex-does"
 STANDIN
-# The 30 seconds `codex queue` gets pass at once while $dir/no-time exists.
+# The helper's poll is short. The time `codex queue` gets passes as soon as it
+# has started, while $dir/no-time exists.
 cat >"$dir/sleep" <<STANDIN
 #!/bin/sh
-[ "\$1" = 30 ] && [ -f "$dir/no-time" ] && exit 0
+[ "\$1" = 5 ] && exec /bin/sleep 0.02
+if [ -f "$dir/no-time" ]; then
+	until [ -f "$dir/running" ]; do /bin/sleep 0.01; done
+	exit 0
+fi
 exec /bin/sleep "\$@"
 STANDIN
 # Stays the parent of the hook it runs, as Codex does: `host [word] hook input`.
@@ -58,7 +64,7 @@ STANDIN
 chmod +x "$dir/blixel" "$dir/codex" "$dir/sleep" "$dir/host"
 
 reset() {
-	rm -rf "$dir/data" "$dir/old" "$dir/no-time" "$log"
+	rm -rf "$dir/data" "$dir/old" "$dir/no-time" "$dir/running" "$log"
 	mkdir "$dir/data"
 	: >"$log"
 	: >"$dir/handoffs"
@@ -172,14 +178,19 @@ echo '{"error":{"code":"not_in_meeting","message":"The app is not in a \"meeting
 told=$(reason "$(prompt "connect blixel")")
 tells "refused" "$told" 'Blixel did not connect: The app is not in a "meeting". Join from the app.'
 
+printf '%s\n' '{"error":{"code":"x","message":"Line\tone\nline two"}}' >"$dir/connect"
+tells "control characters" "$(reason "$(prompt "connect blixel")")" "Line one line two"
+
 rm "$dir/connect"
 echo "Blixel isn't installed. Get it at https://blixel.app" >"$dir/connect"
 tells "no Blixel" "$(reason "$(prompt "connect blixel")")" "Get it at https://blixel.app"
 
+# Its connect is the skill's, which is also what brings the rules. The app queues
+# into the thread there, so this is also a handoff that says the phrase.
 reset
 touch "$dir/old"
-tells "older Blixel" "$(reason "$(prompt "connect blixel")")" "Connected"
-tells "older Blixel" "$(tail -n 1 "$log")" "thread=$thread"
+silent "older Blixel" "$(prompt "connect blixel")"
+[ "$(grep -c "agent connect" "$log")" = 1 ] || fail "older Blixel: connected twice: $(cat "$log")"
 
 # A handoff is a prompt too
 
@@ -226,7 +237,7 @@ tells "queued" "$said" "agent ack 1 queued --reason codex queue exited 0 pid=$ho
 tells "follows the session" "$said" "agent follow --json --acks pid=$host key=$thread provider=codex name=Codex"
 kill "$(cat "$dir/follower")"
 until_true "ended with its follower" stopped "$host"
-silent "leaves no lock" "$(ls "$dir/data")"
+never "leaves no lock" "$(ls "$dir/data")" "helper."
 
 outcome() { # name, state; `codex queue` was set up by the caller
 	handoffs '{"id":7,"prompt":"p","sender_name":"A"}'
@@ -251,8 +262,10 @@ reset; queues "Queued message 1 for thread $other"
 outcome "another thread confirmed" unknown
 reset; queues "killed" 137
 outcome "signalled" unknown
-reset; echo 'exec /bin/sleep 300' >"$dir/codex-does"; touch "$dir/no-time"
+reset; printf ': >"%s/running"\nexec /bin/sleep 300\n' "$dir" >"$dir/codex-does"; touch "$dir/no-time"
 outcome "never answers" unknown
+reset; printf 'trap "" TERM\n: >"%s/running"\nexec /bin/sleep 300\n' "$dir" >"$dir/codex-does"; touch "$dir/no-time"
+outcome "never answers and ignores being stopped" unknown
 
 reset
 queues "No active session found" 1
@@ -270,6 +283,73 @@ until_true "acks" logged "agent ack 3"
 tells "marks what it queued" "$(ls "$dir/data")" "queued.$thread.$(printf p | /sbin/md5 -q).3"
 kill "$(cat "$dir/follower")"
 wait "$host"
+
+# Codex can hold a handoff past the helper that queued it.
+reset
+handoffs '{"id":3,"prompt":"connect blixel","sender_name":"A"}'
+start "$thread"
+until_true "acks" logged "agent ack 3"
+kill "$(cat "$dir/follower")"
+wait "$host"
+tells "the helper ended first" "$(prompt "connect blixel")" "Each is a suggestion"
+never "the helper ended first" "$(cat "$log")" "agent connect"
+
+# A session started by a bare name queues through its own binary, not what PATH
+# has. A copy of bash stands in for it, so its `queue` argument runs $dir/queue.
+reset
+mkdir -p "$dir/session"
+cp /bin/bash "$dir/session/codex"
+codesign -f -s - "$dir/session/codex" 2>/dev/null
+cat >"$dir/queue" <<STANDIN
+echo "its own binary" >>"$log"
+echo "Queued message 1 for thread $thread"
+STANDIN
+handoffs '{"id":4,"prompt":"p","sender_name":"A"}'
+printf '{"session_id":"%s"}' "$thread" >"$dir/input.own"
+"$dir/session/codex" "$dir/host" "$root/codex/helper.sh" "$dir/input.own" &
+host=$!
+until_true "acks" logged "agent ack 4"
+tells "its own binary" "$(cat "$log")" "its own binary"
+never "its own binary" "$(cat "$log")" "[queue]"
+kill "$(cat "$dir/follower")"
+wait "$host"
+
+# Hooks run outside the sandbox, and a session's PATH can hold a folder it writes.
+reset
+mkdir -p "$dir/planted"
+for tool in blixel cat codex grep ln lsof md5 mkdir plutil ps readlink rm sed sleep tail tr; do
+	printf '#!/bin/sh\n: >"%s/ran"\n' "$dir" >"$dir/planted/$tool"
+	chmod +x "$dir/planted/$tool"
+done
+handoffs '{"id":5,"prompt":"p","sender_name":"A"}'
+printf '{"session_id":"%s"}' "$thread" >"$dir/input.planted"
+PATH="$dir/planted:$PATH" "$dir/host" "$root/codex/helper.sh" "$dir/input.planted" &
+host=$!
+until_true "acks" logged "agent ack 5"
+kill "$(cat "$dir/follower")"
+wait "$host"
+typed "connect blixel" >"$dir/typed"
+PATH="$dir/planted:$PATH" "$root/codex/prompt.sh" <"$dir/typed" >/dev/null
+printf '{"session_id":"%s"}' "$thread" >"$dir/typed"
+PATH="$dir/planted:$PATH" "$root/codex/session.sh" <"$dir/typed" >/dev/null
+[ ! -e "$dir/ran" ] || fail "a hook ran a command from the session's PATH"
+
+# Without the override: a real run would reach the installed app, so it is read.
+path=$(printf '{"session_id":"%s"}' "$thread" | env -u BLIXEL_HOOK_PATH sh -c '. "$PLUGIN_ROOT/codex/hook.sh"; echo "$PATH"')
+[ "$path" = /usr/bin:/bin:/usr/sbin:/sbin ] || fail "hook PATH: $path"
+
+# A bundle Spotlight found can be one a workspace holds. /Applications is swapped
+# out of a copy of the shim, as the check would pass on any Mac with Blixel on it.
+mkdir -p "$dir/spotlight"
+printf '#!/bin/sh\necho searched >>"%s"\n' "$log" >"$dir/spotlight/mdfind"
+chmod +x "$dir/spotlight/mdfind"
+sed 's#/Applications/Blixel.app#/nowhere#' "$root/skills/connect-agent/scripts/blixel" >"$dir/shim"
+: >"$log"
+PATH="$dir/spotlight:/usr/bin:/bin" sh "$dir/shim" 2>/dev/null
+tells "the skill's shim searches" "$(cat "$log")" "searched"
+: >"$log"
+BLIXEL_SHIM_NO_SEARCH=1 PATH="$dir/spotlight:/usr/bin:/bin" sh "$dir/shim" 2>/dev/null
+silent "a hook's shim does not" "$(cat "$log")"
 
 # One per thread
 
