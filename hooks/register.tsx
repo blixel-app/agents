@@ -438,7 +438,7 @@ export const register: Register = on => {
   })
 
   // Plain plugin commands, so every surface lists them; where the mod follows
-  // nothing, each runs as the prompt it holds, which hands it to the skill.
+  // nothing, each runs as the prompt it holds.
   on('command.run', { command: 'blixel:connect' }, async ($, e, next) => {
     if (!session) return next(e)
     const approval = e.args.trim()
