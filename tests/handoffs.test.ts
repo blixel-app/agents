@@ -680,6 +680,43 @@ test('a reload while connected follows again with no command', async ($, on) => 
   expect(stub.status()).toBe('✦ connected to Design sync')
 })
 
+test('a reload while connected also submits a handoff still waiting, with no turn to end first', async ($, on) => {
+  seedPanel(on, {
+    isConnected: true, room: 'Design sync', meeting: 'm-1', app: 'running', isInMeeting: true,
+    handoffs: [{ n: 1, text: 'Left over', sender: 'Ana', at: 0, state: 'waiting' }],
+  })
+  const stub = stage(on, {
+    isLive: true,
+    cli: connectedIn('connected'),
+    stored: { [`queue:${PID}:${STARTED}`]: { next: 2, pending: [{ n: 1, text: 'Left over' }] } },
+  })
+
+  await start($)
+  await stub.settle()
+
+  expect(stub.submitted).toEqual(['Left over'])
+})
+
+test('a reload that cannot read the app keeps following until a poll can', async ($, on) => {
+  seedPanel(on, { isConnected: true, room: 'Design sync', meeting: 'm-1', app: 'running', isInMeeting: true })
+  let isBusy = true
+  const stub = stage(on, {
+    isLive: true,
+    cli: command =>
+      isBusy ? { exitCode: 1, stderr: '{"error":{"code":"busy","message":"Try again"}}\n' } : connectedIn('connected')(command),
+  })
+
+  await start($)
+  await stub.settle()
+  expect(stub.running()).toBe(1)
+
+  isBusy = false
+  await stub.clock.advance(15_000)
+  await stub.settle()
+  expect(stub.running()).toBe(1)
+  expect(stub.status()).toBe('✦ connected to Design sync')
+})
+
 test('a reload after the connection ended leaves nothing running', async ($, on) => {
   seedPanel(on, { isConnected: true, room: 'Design sync', meeting: 'm-1', app: 'running', isInMeeting: true })
   const stub = stage(on, { isLive: true, cli: command => ({ exitCode: 0, stdout: command === 'current' ? current() : status({}) }) })
@@ -703,6 +740,35 @@ test('/clear keeps a connected session following', async ($, on) => {
   expect(stub.running()).toBe(1)
   expect(stub.spawns()).toBe(1)
   expect(stub.status()).toBe('✦ connected to Design sync')
+})
+
+test('a handoff waiting when its connection ends still runs after the next turn', async ($, on) => {
+  let isEnded = false
+  let isBusy = true
+  const stub = stage(on, {
+    isLive: true,
+    printed: [printed('Rename the flag')],
+    submit: () => (isBusy ? 'a Stop stands' : undefined),
+    cli: command =>
+      command === 'current'
+        ? { exitCode: 0, stdout: current('connected') }
+        : command === 'connect'
+          ? undefined as never
+          : { exitCode: 0, stdout: isEnded ? status({ ended: { end_reason: 'meeting_left' } }) : status({ connection_id: 'c-1' }, { meeting_id: 'm-1' }) },
+  })
+
+  await connectSession($, stub)
+  isEnded = true
+  await stub.clock.advance(15_000)
+  await stub.settle()
+  expect(stub.running()).toBe(0)
+  expect(stub.status()).toBe('✦ 1 handoff waiting')
+
+  isBusy = false
+  await complete($)
+  await stub.settle()
+  expect(stub.submitted).toEqual(['Rename the flag', 'Rename the flag'])
+  expect(stub.status()).toBeUndefined()
 })
 
 test('an answer the app gave before a connect does not undo the connect when it arrives after it', async ($, on) => {

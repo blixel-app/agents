@@ -528,10 +528,13 @@ export const register: Register = on => {
     // A reload ended the follower; $.state outlives it and says this session
     // had one, or handoffs left to submit.
     if (before.isConnected) {
-      void refresh()
-    } else if (before.handoffs.some(one => one.state !== 'delivered')) {
-      void ready().then(() => deliver())
+      void refresh().then(answer => {
+        // Unread is not ended: a poll settles it, and without a follower the
+        // connection would lapse first.
+        if (answer.error && answer.error.code !== 'app_unavailable') void session?.follow()
+      })
     }
+    if (before.handoffs.some(one => one.state !== 'delivered')) void ready().then(() => deliver())
     return started
   })
 
