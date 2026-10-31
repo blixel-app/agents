@@ -16,7 +16,7 @@ type Session = {
   status: () => Promise<string>
   deliver: () => Promise<void>
   refresh: () => Promise<Answer>
-  isViaMonitor: () => boolean
+  ownsHandoffs: () => boolean
   connecting: () => Promise<(() => void) | undefined>
   follow: () => Promise<void>
   forget: () => Promise<void>
@@ -515,7 +515,7 @@ export const register: Register = on => {
 
       deliver,
       refresh,
-      isViaMonitor: () => attachment === 'refused',
+      ownsHandoffs: () => key !== '' && attachment !== 'refused',
       connecting,
       follow: async () => {
         if (await ready()) await wake()
@@ -729,10 +729,14 @@ export const register: Register = on => {
   // that stops it would attach and take the next connection's handoffs.
   on('classic.Stop', async ($, e, next) => {
     const stopped = await next(e)
-    if (session && !session.isViaMonitor()) {
+    if (session?.ownsHandoffs()) {
       for (const task of e.background_tasks ?? []) {
         // Claude Code reports a plugin monitor as a shell task.
         if (task.description !== MONITOR || !task.command?.includes('agent follow')) continue
+        // A call under an `ask` rule would stop the end of the turn on a dialog
+        // about a task the user never heard of.
+        const verdict = await $.tool.check({ tool: 'TaskStop', input: { task_id: task.id } }).catch(() => undefined)
+        if (verdict?.decision !== 'allow') continue
         await $.tool.call({ tool: 'TaskStop', task_id: task.id }).catch(() => undefined)
       }
     }

@@ -25,6 +25,8 @@ export type Setup = {
   // promise answers once it settles.
   cli?: (command: string, args: readonly string[]) => Ran | Promise<Ran>
   stored?: Record<string, unknown>
+  // The mod cannot learn this session's process.
+  probeFails?: boolean
   // Every write to the mod's store fails.
   saveFails?: boolean
   env?: Record<string, string>
@@ -106,7 +108,7 @@ export function stage(on: On, setup: Setup = {}) {
     const read = { stderr: '', isStdoutTruncated: false, isStderrTruncated: false }
     if (e.argv[0] === '/bin/sh') {
       probes += 1
-      return { value: { ...read, exitCode: 0, stdout: `${PID}\n${STARTED}\n` } }
+      return { value: { ...read, exitCode: setup.probeFails ? 1 : 0, stdout: `${PID}\n${STARTED}\n` } }
     }
     runs.push({ argv: e.argv, env: e.init?.env ?? {} })
     const command = e.argv[2] ?? ''

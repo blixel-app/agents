@@ -576,6 +576,7 @@ test("loading the skill attaches the mod's follower before the skill's monitor c
 const stopHook = (task: Record<string, unknown>) =>
   ({ background_tasks: [{ id: 'task-1', status: 'running', ...task }] }) as never
 const plugged = { type: 'shell', description: 'Blixel handoffs', command: '"/p"/bin/blixel agent follow' }
+const verdict = (decision: string) => () => ({ decision }) as never
 
 test("the plugin's monitor is stopped when the turn that armed it ends, while the mod follows", async ($, on) => {
   const stub = stage(on, { isLive: true })
@@ -584,6 +585,7 @@ test("the plugin's monitor is stopped when the turn that armed it ends, while th
     if (e.tool === 'TaskStop') stops.push(e.task_id)
     return { result: { success: true, commandName: 'blixel:connect-agent' } }
   })
+  on('tool.check', verdict('allow'))
   on('classic.Stop', () => ({}))
 
   await loadSkill($, stub)
@@ -593,6 +595,23 @@ test("the plugin's monitor is stopped when the turn that armed it ends, while th
   expect(stub.running()).toBe(1)
 })
 
+test("a monitor is left running where the mod cannot follow: it is the session's only route", async ($, on) => {
+  const stub = stage(on, { probeFails: true })
+  const stops: unknown[] = []
+  on('tool.call', ($, e) => {
+    if (e.tool === 'TaskStop') stops.push(e.task_id)
+    return { result: { success: true, commandName: 'blixel:connect-agent' } }
+  })
+  on('tool.check', verdict('allow'))
+  on('classic.Stop', () => ({}))
+
+  await loadSkill($, stub)
+  await $.classic.Stop(stopHook(plugged))
+
+  expect(stub.spawns()).toBe(0)
+  expect(stops).toEqual([])
+})
+
 test('a monitor that holds the handoffs is left to deliver them, and anything else is left alone', async ($, on) => {
   const stub = stage(on, { isLive: true, follower: 'refused', cli: connectedIn('connected') })
   const stops: unknown[] = []
@@ -600,6 +619,7 @@ test('a monitor that holds the handoffs is left to deliver them, and anything el
     stops.push(e.tool)
     return { result: {} }
   })
+  on('tool.check', verdict('allow'))
   on('classic.Stop', () => ({}))
 
   await connectSession($, stub)
@@ -614,6 +634,7 @@ test('another background task is left alone', async ($, on) => {
     stops.push(e.tool)
     return { result: {} }
   })
+  on('tool.check', verdict('allow'))
   on('classic.Stop', () => ({}))
 
   await connectSession($, stub)
