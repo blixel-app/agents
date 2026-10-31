@@ -530,7 +530,12 @@ test("a connection's end does not stop the follower a connect in flight is waiti
   expect(stub.status()).toBe('✦ connected')
 })
 
-for (const command of ['blixel agent connect', '/some/plugin/scripts/blixel agent connect --approval ask']) {
+for (const command of [
+  'blixel agent connect',
+  '/some/plugin/scripts/blixel agent connect --approval ask',
+  '"/some plugin/scripts/blixel" agent connect',
+  'cd /work && blixel agent connect 2>&1',
+]) {
   test(`\`${command}\` through Bash follows, and goes to the app with its follower on the way`, async ($, on) => {
     const stub = stage(on, { isLive: true })
     let startedFirst = false
@@ -548,17 +553,23 @@ for (const command of ['blixel agent connect', '/some/plugin/scripts/blixel agen
   })
 }
 
-test('a Bash call that does not run blixel agent connect runs nothing for Blixel', async ($, on) => {
-  const stub = stage(on)
-  on('tool.call', () => ({ result: { stdout: '', stderr: '', interrupted: false } }))
+for (const command of [
+  'grep "blixel agent" notes.md',
+  'grep -rn "blixel agent connect" docs',
+  "git commit -m 'blixel agent disconnect stops the monitor'",
+]) {
+  test(`\`${command}\` only names Blixel, and runs nothing for it`, async ($, on) => {
+    const stub = stage(on)
+    on('tool.call', () => ({ result: { stdout: '', stderr: '', interrupted: false } }))
 
-  await start($)
-  await $.tool.call({ tool: 'Bash', command: 'grep "blixel agent" notes.md' })
-  await stub.settle()
+    await start($)
+    await $.tool.call({ tool: 'Bash', command })
+    await stub.settle()
 
-  expect(stub.spawns()).toBe(0)
-  expect(stub.runs).toEqual([])
-})
+    expect(stub.spawns()).toBe(0)
+    expect(stub.runs).toEqual([])
+  })
+}
 
 test("loading the skill attaches the mod's follower before the skill's monitor can", async ($, on) => {
   const stub = stage(on, { isLive: true })

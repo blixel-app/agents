@@ -721,7 +721,8 @@ export const register: Register = on => {
 
   // The connect-agent skill connects and disconnects through Bash.
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
-    const command = /\bblixel\b.*\bagent\s+(connect|disconnect)\b/.exec(e.command)?.[1]
+    // A command that only quotes it, as a grep or a commit message does, is no invocation.
+    const command = /(?:^|[\s;&|(/])blixel["']?\s+agent\s+(connect|disconnect)\b/.exec(e.command)?.[1]
     const connected = command === 'connect' ? await session?.connecting() : undefined
     try {
       const ran = await next(e)
