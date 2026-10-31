@@ -25,6 +25,8 @@ export type Setup = {
   // promise answers once it settles.
   cli?: (command: string, args: readonly string[]) => Ran | Promise<Ran>
   stored?: Record<string, unknown>
+  // Answers each read of the session's id; the default is at once.
+  sessionID?: () => Promise<string>
   // The mod cannot learn this session's process.
   probeFails?: boolean
   // Every write to the mod's store fails.
@@ -70,7 +72,7 @@ export function stage(on: On, setup: Setup = {}) {
   on('turn.complete', () => ({ text: '' }))
   // Stands for the plugin's own command, the prompt that hands it to the skill.
   on('command.run', () => ({ text: 'the skill takes it' }))
-  on('session.id', () => ({ value: 'session-1' }))
+  on('session.id', () => setup.sessionID?.().then(value => ({ value })) ?? { value: 'session-1' })
   on('fs.read', () => ({ value: SKILL }))
   const panes: string[] = []
   const follows: (readonly string[])[] = []

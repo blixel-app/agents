@@ -423,6 +423,44 @@ test('a connect that fails leaves nothing running', async ($, on) => {
   expect(asked()).toBe(before)
 })
 
+test('a connect right after a failed one leaves one follower, however late the first one starts', async ($, on) => {
+  let isConnecting = false
+  let isHeld = false
+  let release = () => {}
+  let fail = () => {}
+  const stub = stage(on, {
+    isLive: true,
+    // The first read once a connect is out is its follower's: it is still
+    // starting when that connect fails.
+    sessionID: () => {
+      if (!isConnecting || isHeld) return Promise.resolve('session-1')
+      isHeld = true
+      return new Promise(resolve => {
+        release = () => resolve('session-1')
+      })
+    },
+    cli: command => {
+      if (command !== 'connect' || isHeld) return undefined as never
+      isConnecting = true
+      return new Promise(resolve => {
+        fail = () => resolve({ exitCode: 1, stderr: '{"error":{"code":"not_in_meeting","message":"No"}}\n' })
+      })
+    },
+  })
+
+  await start($)
+  const failing = run($, 'blixel:connect')
+  await stub.clock.advance(0)
+  fail()
+  await failing
+  await run($, 'blixel:connect')
+  await stub.clock.advance(0)
+  release()
+  await stub.settle()
+
+  expect(stub.running()).toBe(1)
+})
+
 for (const [how, end] of [
   ['/blixel:disconnect', 'command'],
   ['the meeting ending', 'meeting_left'],
@@ -522,11 +560,13 @@ test("a connection's end does not stop the follower a connect in flight is waiti
   await stub.settle()
   await stub.clock.advance(15_000)
   await stub.settle()
+  expect(stub.running()).toBe(1)
+
   answerConnect()
   await again
   await stub.settle()
 
-  expect(stub.running()).toBe(1)
+  expect(stub.spawns()).toBe(1)
   expect(stub.status()).toBe('✦ connected')
 })
 
