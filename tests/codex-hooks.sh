@@ -54,7 +54,7 @@ cat >"$dir/host" <<'STANDIN'
 [ "$#" = 3 ] && shift
 echo $$ >"$2.host"
 PATH=${SESSION_PATH:-$PATH}
-/bin/zsh -c "$1" <"$2" &
+"${HOOK_SHELL:-/bin/zsh}" -c "$1" <"$2" &
 wait $!
 STANDIN
 chmod +x "$dir/blixel" "$dir/codex" "$dir/host"
@@ -166,15 +166,25 @@ filtered() { # name; the input is in $dir/typed
 	silent "$1: wrote" "$(ls "$dir/data")"
 }
 
-for words in "fix the build" "please connect blixel" \
-	"blixel transcripts" "connect to blixel" "connect" 'say \"prompt\":\"connect blixel\"'; do
-	typed "$words" >"$dir/typed"
-	filtered "ordinary prompt: $words"
+# Codex runs them with the login shell where it knows it.
+for HOOK_SHELL in /bin/zsh /bin/bash; do
+	export HOOK_SHELL
+	for words in "fix the build" "please connect blixel" \
+		"blixel transcripts" "connect to blixel" "connect" 'say \"prompt\":\"connect blixel\"'; do
+		typed "$words" >"$dir/typed"
+		filtered "$HOOK_SHELL, ordinary prompt: $words"
+	done
+	ran "git status" >"$dir/typed"
+	filtered "$HOOK_SHELL, ordinary command"
+	ran 'echo \"prompt\":\"connect blixel' >"$dir/typed"
+	filtered "$HOOK_SHELL, a command quoting a phrase's key"
+
+	reset
+	for words in "connect blixel" "Blixel:Connect ask" '$blixel:connect direct'; do
+		tells "$HOOK_SHELL: $words" "$(reason "$(prompt "$words")")" "Connected to the Blixel meeting"
+	done
 done
-ran "git status" >"$dir/typed"
-filtered "ordinary command"
-ran 'echo \"prompt\":\"connect blixel' >"$dir/typed"
-filtered "a command quoting a phrase's key"
+unset HOOK_SHELL
 
 reset
 silent "ordinary prompt" "$(prompt "fix the build")"
@@ -456,6 +466,20 @@ started "a connect"
 never "a quit session's state" "$(ls "$dir/data")" "$other"
 never "a quit session's state" "$(ls "$dir/data")" "queued.old"
 leaves 0
+
+# Whatever a prompt or a command says stays data, in a session whose filters read it.
+reset
+mkdir "$dir/data/$thread"
+echo "$$" >"$dir/data/$thread/connected"
+echo 5 >"$dir/relay-exit"
+mark="touch $dir/pwned"
+for words in "\$($mark)" "\`$mark\`" "; $mark" "\$blixel:\$($mark)" "\\\"; $mark; \\\""; do
+	silent "$words" "$(prompt "$words")"
+	bash_call "blixel agent connect $words"
+	wait "$host"
+done
+[ ! -e "$dir/pwned" ] || fail "a hook ran text"
+rm -f "$dir/relay-exit"
 
 # Past the filter's limit `exec` would fail, and the hook with it.
 reset
