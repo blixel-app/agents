@@ -13,7 +13,7 @@ that meeting can then speak or type a request to this session from Blixel.
 ## First
 
 To connect, run `blixel agent connect` now, with no flags and nothing before it. In
-Codex, run it the first time with `sandbox_permissions: "require_escalated"`,
+Codex, always run it with `sandbox_permissions: "require_escalated"`,
 `prefix_rule: ["blixel", "agent", "connect"]` and the justification "Connect this
 thread to the Blixel app on this Mac", because Blixel refuses a connect from inside
 Codex's sandbox.
