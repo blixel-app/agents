@@ -99,9 +99,9 @@ a filter of about 6 ms on each prompt and shell command, and everything stops wh
 the connection ends. The hooks follow the thread and queue each handoff into it with
 `codex queue`, and Codex runs it after any turn in progress. You can also ask the
 session to connect to the Blixel call; Codex's sandbox blocks Blixel's local socket,
-so approve running `blixel agent` outside the sandbox when Codex asks; if it can't
-ask, run `/permissions` and choose Approve for me. If you take over 2 minutes to
-approve, connect again. A plain `codex` session runs on Codex's shared app-server,
+so approve running the CLI inside Blixel.app outside the sandbox when Codex asks; if
+it can't ask, run `/permissions` and choose Approve for me. If you take over 2 minutes
+to approve, connect again. Codex needs Blixel in `/Applications` or `~/Applications`. A plain `codex` session runs on Codex's shared app-server,
 where a handoff still runs after you close its terminal, so ask the session to
 disconnect before you close it. After `/new` or `/resume`, handoffs stay with the
 conversation that connected: `$blixel:status` says so, and connecting from the new
@@ -129,10 +129,13 @@ and `claude plugin validate .` checks it the way Claude Code loads it.
 Codex's hooks in `codex/`. `codex/skills/` is a copy of `skills/`, as Codex drops
 symlinks when it installs a plugin: run `scripts/codex-skills.sh` after changing a
 skill, and the test fails if you don't. `codex/codex-skills/` holds what Codex alone
-lists, the skills behind `$blixel:connect` and the rest. Hooks run outside Codex's sandbox, so they ignore the session's PATH and take the CLI inside Blixel.app,
-and each filter in `codex/hooks.json` names its commands by full path;
-`BLIXEL_HOOK_PATH`, set where Codex starts, replaces their PATH to test a development
-build.
+lists, the skills behind `$blixel:connect` and the rest. Hooks run outside Codex's
+sandbox, so they ignore the session's PATH and take the CLI inside Blixel.app, and each
+filter in `codex/hooks.json` names its commands by full path; `BLIXEL_HOOK_PATH`, set
+where Codex starts, replaces their PATH to test a development build. The same goes for
+what the skills have Codex run outside its sandbox: an approved bare `blixel` runs
+whatever PATH holds, so they name the CLI by full path, and a development build's has
+to be named to the session.
 
 `skills/connect-agent/SKILL.md` holds what every agent shares; each agent's part is
 in `references/`, the file a failed `blixel agent connect` names.

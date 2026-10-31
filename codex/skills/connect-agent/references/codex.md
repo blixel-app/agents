@@ -11,7 +11,7 @@ of asking.
 Codex's sandbox blocks Blixel's local socket unless its network is on. Request
 escalated permissions for `blixel agent connect`, as the skill says. Do the same for
 `blixel agent status` and `blixel agent disconnect` unless they already work where
-you are.
+you are. Each runs by the skill's full path, never as a bare `blixel`.
 
 ## Connect
 
