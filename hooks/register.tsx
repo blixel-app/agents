@@ -146,6 +146,7 @@ export const register: Register = on => {
 
     let queue = queueFrom(await $.store.get(key).catch(() => undefined))
     let acks = true
+    let saving = 0
     let connected = false
     let attachment: Attachment = 'stopped'
     let delivering = false
@@ -194,15 +195,16 @@ export const register: Register = on => {
       void update($, panel, () => view).catch(() => undefined)
     }
 
-    const save = () => $.store.set(key, queue).catch(() => undefined)
+    const save = () => $.store.set(key, queue).then(() => true, () => false)
 
     // One at a time, each a turn of its own. A prompt the session drops stays
-    // queued and is submitted again once the next turn completes.
+    // queued and is submitted again once the next turn completes. A handoff
+    // still being saved waits: it may yet be refused.
     const deliver = async () => {
       if (delivering) return
       delivering = true
       try {
-        for (let handoff = queue.pending[0]; handoff !== undefined; handoff = queue.pending[0]) {
+        for (let handoff = queue.pending[0]; handoff !== undefined && saving === 0; handoff = queue.pending[0]) {
           // Worded as the user set in Blixel, which decides whether it names
           // its sender: Claude Code adds no frame of its own.
           const submitted = await $.prompt.submit({ text: handoff.text, asUser: true })
@@ -226,6 +228,15 @@ export const register: Register = on => {
       }
     }
 
+    // `failed` promises it will not run, so it leaves the queue only once the
+    // app takes that answer: an older app has already told the sender queued.
+    const refuse = async (n: number, id: number) => {
+      const answer = await call(['agent', 'ack', String(id), 'failed', '--reason', 'the session could not save it'])
+      if (answer.error || answer.data.outcome !== 'recorded') return
+      queue = { ...queue, pending: queue.pending.filter(one => one.n !== n) }
+      view = { ...view, handoffs: view.handoffs.filter(one => one.n !== n) }
+    }
+
     // Saved before it is submitted: the follower has already told the app it
     // printed this one, so the queue is the only copy left.
     const receive = (line: string) => {
@@ -238,10 +249,15 @@ export const register: Register = on => {
       queue = { next: queue.next + 1, pending: [...queue.pending, { n: handoff.n, text }] }
       view = { ...view, handoffs: [handoff, ...view.handoffs].slice(0, HISTORY) }
       show()
-      void save().then(() => {
+      saving += 1
+      void save().then(async held => {
         // Once, whatever it answers: after an app restart the same id can be
         // another handoff, and an app too old for acks has answered already.
-        if (acks && Number.isInteger(printed.id)) void call(['agent', 'ack', String(printed.id), 'queued'])
+        if (acks && Number.isInteger(printed.id)) {
+          if (held) void call(['agent', 'ack', String(printed.id), 'queued'])
+          else await refuse(handoff.n, printed.id)
+        }
+        saving -= 1
         return deliver()
       })
     }

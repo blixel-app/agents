@@ -1,6 +1,7 @@
 import { expect, test } from 'claude-code/testing'
 
 import { complete, current, PID, printed, run, stage, start, STARTED, status } from './support'
+import type { Ran } from './support'
 
 test('a handoff the follower prints is submitted as a prompt of its own, worded as Blixel words it', async ($, on) => {
   const first = printed('Ana asks: could you add a test for the reconnect case?', 'Ana', 1)
@@ -179,6 +180,47 @@ for (const [app, code] of [
     expect(stub.toasts).toEqual([])
   })
 }
+
+test('a handoff printed without an id runs, with nothing to ack', async ($, on) => {
+  const stub = stage(on, { printed: ['{"prompt":"Rename the flag"}\n'] })
+
+  await start($)
+  await stub.settle()
+
+  expect(stub.submitted).toEqual(['Rename the flag'])
+  expect(stub.acks()).toEqual([])
+})
+
+const refusedSave = (ack: Ran) => ({
+  printed: [printed('Rename the flag', 'Ana', 7) + printed('And run it', 'Bea', 8)],
+  saveFails: true,
+  cli: (command: string): Ran =>
+    command === 'ack' ? ack : { exitCode: 0, stdout: command === 'status' ? status({}) : current() },
+})
+
+test('handoffs that cannot be saved are acked as failed and never run', async ($, on) => {
+  const answer = JSON.stringify({ data: { outcome: 'recorded', handoff_id: 7 } })
+  const stub = stage(on, refusedSave({ exitCode: 0, stdout: answer }))
+
+  await start($)
+  await stub.settle()
+
+  expect(stub.acks().map(ack => ack.slice(0, 3))).toEqual([['7', 'failed', '--reason'], ['8', 'failed', '--reason']])
+  expect(stub.submitted).toEqual([])
+  expect(stub.status()).toBe(undefined)
+})
+
+test('a handoff that cannot be saved still runs when the app did not take its failed ack', async ($, on) => {
+  const stub = stage(on, refusedSave({ exitCode: 5, stderr: '{"error":{"code":"incompatible_protocol","message":"No"}}\n' }))
+
+  await start($)
+  await stub.settle()
+  await stub.clock.advance(60_000)
+  await stub.settle()
+
+  expect(stub.acks().map(ack => ack[0])).toEqual(['7', '8'])
+  expect(stub.submitted).toEqual(['Rename the flag', 'And run it'])
+})
 
 test('the status line counts the handoffs waiting for the session', async ($, on) => {
   const stub = stage(on, { printed: [printed('One', 'Ana', 1) + printed('Two', 'Ana', 2)], submit: () => 'busy' })

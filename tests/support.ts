@@ -25,6 +25,8 @@ export type Setup = {
   // answers once it settles.
   cli?: (command: string, args: readonly string[]) => Ran | Promise<Ran>
   stored?: Record<string, unknown>
+  // Every write to the mod's store fails.
+  saveFails?: boolean
   env?: Record<string, string>
   surfaces?: ('terminal' | 'desktop')[]
 }
@@ -82,6 +84,7 @@ export function stage(on: On, setup: Setup = {}) {
   })
   on('store.get', ($, e) => ({ value: saved.get(e.key) }))
   on('store.set', ($, e) => {
+    if (setup.saveFails) throw new Error('disk full')
     saved.set(e.key, e.value)
     return { value: undefined }
   })
