@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { complete, current, PID, printed, run, stage, start, STARTED, status } from './support'
+import { complete, connectSession, current, PID, printed, run, seedPanel, stage, start, STARTED, status } from './support'
 
 const SURFACES = ['terminal', 'desktop'] as const
 const LONG = Array.from({ length: 80 }, (_, i) => `word${i}`).join(' ')
@@ -53,8 +53,7 @@ const connectedCli = () => {
 test('/blixel:status opens the Blixel pane', async ($, on) => {
   const stub = stage(on)
 
-  await start($)
-  await stub.settle()
+  await connectSession($, stub)
   await run($, 'blixel:status')
 
   expect(stub.panes).toEqual(['blixel'])
@@ -65,7 +64,6 @@ test('/blixel:connect opens the pane in the desktop app', async ($, on) => {
   const desktop = stage(on, { cli: command => cli.answer(command), surfaces: ['desktop'] })
 
   await start($)
-  await desktop.settle()
   await run($, 'blixel:connect')
 
   expect(desktop.panes).toEqual(['blixel'])
@@ -75,8 +73,7 @@ test('/blixel:connect leaves the terminal as it is', async ($, on) => {
   const cli = connectedCli()
   const terminal = stage(on, { cli: command => cli.answer(command), surfaces: ['terminal'] })
 
-  await start($)
-  await terminal.settle()
+  await connectSession($, terminal)
   await run($, 'blixel:connect')
 
   expect(terminal.panes).toEqual([])
@@ -86,8 +83,7 @@ test('the pane shows the connection and ends it, on every surface', async ($, on
   const cli = connectedCli()
   const stub = stage(on, { cli: command => cli.answer(command) })
 
-  await start($)
-  await stub.settle()
+  await connectSession($, stub)
 
   for (const surface of SURFACES) {
     await run($, 'blixel:connect')
@@ -106,28 +102,47 @@ test('the pane shows the connection and ends it, on every surface', async ($, on
   }
 })
 
-test("the pane says when Blixel isn't running, with nothing to press", async ($, on) => {
+test("the pane says when Blixel isn't running, and can still try to connect", async ($, on) => {
   const stub = stage(on, {
     cli: () => ({ exitCode: 1, stderr: '{"error":{"code":"app_unavailable","message":"The app is not running"}}\n' }),
   })
 
   await start($)
+  await run($, 'blixel:status')
   await stub.settle()
 
   for (const surface of SURFACES) {
     const ui = await $.ui.mount(pane(surface))
     expect(await ui.find({ type: 'Text', text: /Blixel isn't running/ })).toBeDefined()
-    expect(await ui.find({ key: 'connection' })).toBeUndefined()
+    expect((await ui.find({ key: 'connection' }))?.props.label).toBe('Connect')
     await ui.unmount()
   }
 })
+
+for (const surface of SURFACES) {
+  test(`the ${surface} pane connects a session nothing has run in`, async ($, on) => {
+    const cli = connectedCli()
+    cli.answer('disconnect')
+    const stub = stage(on, { cli: command => cli.answer(command), isLive: true })
+
+    await start($)
+    await stub.settle()
+    const ui = await $.ui.mount(pane(surface))
+    expect(await ui.find({ type: 'Text', text: /Not connected/ })).toBeDefined()
+    await ui.press({ key: 'connection' })
+    await stub.settle()
+
+    expect(await ui.find({ type: 'Text', text: /Connected to Design sync/ })).toBeDefined()
+    expect(stub.running()).toBe(1)
+    await ui.unmount()
+  })
+}
 
 test('the pane lists each handoff with what became of it', async ($, on) => {
   const answers = ['the prompt was removed from the queue before it ran']
   const stub = stage(on, { printed: [printed('Rename the flag')], submit: () => answers.shift() })
 
-  await start($)
-  await stub.settle()
+  await connectSession($, stub)
 
   for (const surface of SURFACES) {
     const ui = await $.ui.mount(pane(surface))
@@ -152,8 +167,7 @@ test('the pane lists each handoff with what became of it', async ($, on) => {
 test('a long handoff in the pane shows its opening until it is opened', async ($, on) => {
   const stub = stage(on, { printed: [printed(LONG)] })
 
-  await start($)
-  await stub.settle()
+  await connectSession($, stub)
 
   for (const surface of SURFACES) {
     const ui = await $.ui.mount(pane(surface))
@@ -171,8 +185,7 @@ test('a long handoff in the pane shows its opening until it is opened', async ($
 test('each handoff in the pane names who sent it, on every surface', async ($, on) => {
   const stub = stage(on, { printed: [printed('Rename the flag', 'Ana', 1), printed('Run the tests', 'Bea', 2)] })
 
-  await start($)
-  await stub.settle()
+  await connectSession($, stub)
 
   for (const surface of SURFACES) {
     const ui = await $.ui.mount(pane(surface))
@@ -192,8 +205,7 @@ test("the pane lists one meeting's handoffs: a connection to another starts it e
     return found
   }
 
-  await start($)
-  await stub.settle()
+  await connectSession($, stub)
   expect(await listed()).toBe(true)
 
   await run($, 'blixel:disconnect')
@@ -232,8 +244,7 @@ test('a handoff from the new meeting that arrives before the connect is answered
     return found
   }
 
-  await start($)
-  await stub.settle()
+  await connectSession($, stub)
   await run($, 'blixel:disconnect')
   await stub.settle()
 
@@ -261,8 +272,7 @@ test('a handoff from the meeting the session left is not listed once it connects
     return found
   }
 
-  await start($)
-  await stub.settle()
+  await connectSession($, stub)
   stub.print(printed('Rename the flag'))
   await stub.settle()
   expect(await listed()).toBe(true)
@@ -281,8 +291,7 @@ test("a handoff from the meeting the session left is not listed once the skill's
     return { result: { stdout: '', stderr: '', interrupted: false } }
   })
 
-  await start($)
-  await stub.settle()
+  await connectSession($, stub)
   stub.print(printed('Rename the flag'))
   await stub.settle()
 
@@ -298,8 +307,7 @@ test("a handoff from the meeting the session left is not listed once the skill's
 test('a handoff whose sender has no name leads with its time, on every surface', async ($, on) => {
   const stub = stage(on, { printed: [printed('Rename the flag', '')] })
 
-  await start($)
-  await stub.settle()
+  await connectSession($, stub)
 
   for (const surface of SURFACES) {
     const ui = await $.ui.mount(pane(surface))
@@ -310,18 +318,10 @@ test('a handoff whose sender has no name leads with its time, on every surface',
 })
 
 test('a reload keeps the listed handoffs while the session stays in their meeting', async ($, on) => {
-  // What the previous load of the module left in $.state, under its tag.
   const listed = { n: 1, text: 'Rename the flag', sender: 'Ana', at: 0, state: 'delivered' }
-  const before = {
-    app: 'running', isInMeeting: true, isConnected: true, isReconnecting: false, room: 'Design sync',
-    meeting: 'm-1', approval: 'ask', isViaMonitor: false, handoffs: [listed],
-  }
-  let isSeeded = true
-  on('state.get', ($, e, next) =>
-    isSeeded && e.key === 'panel' ? { value: { value: { shape: 'panel-2', value: before }, version: 1 } } : next(e))
-  on('state.set', ($, e, next) => {
-    if (e.key === 'panel') isSeeded = false
-    return next(e)
+  seedPanel(on, {
+    app: 'running', isInMeeting: true, isConnected: true, room: 'Design sync', meeting: 'm-1', approval: 'ask',
+    handoffs: [listed],
   })
   const cli = connectedCli()
   const stub = stage(on, { cli: command => cli.answer(command), stored: { [`queue:${PID}:${STARTED}`]: { next: 2, pending: [] } } })

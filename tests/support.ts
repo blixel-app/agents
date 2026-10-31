@@ -21,8 +21,8 @@ export type Setup = {
   // Answers each prompt the mod submits; a string drops it with that reason.
   submit?: (text: string) => string | undefined | Promise<string | undefined>
   // Answers `blixel agent <command>` and `blixel room current` (as `current`);
-  // the default is a session not connected, in an app in no room. A promise
-  // answers once it settles.
+  // the default is a session connected once it asks, in an app in no room. A
+  // promise answers once it settles.
   cli?: (command: string, args: readonly string[]) => Ran | Promise<Ran>
   stored?: Record<string, unknown>
   // Every write to the mod's store fails.
@@ -58,6 +58,9 @@ export function stage(on: On, setup: Setup = {}) {
   const runs: Run[] = []
   const saved = new Map<string, unknown>(Object.entries(setup.stored ?? {}))
   let spawns = 0
+  let running = 0
+  let probes = 0
+  let isConnected = false
   const later: string[] = []
   let wake = () => {}
 
@@ -101,18 +104,30 @@ export function stage(on: On, setup: Setup = {}) {
   })
   on('process.run', async ($, e) => {
     const read = { stderr: '', isStdoutTruncated: false, isStderrTruncated: false }
-    if (e.argv[0] === '/bin/sh') return { value: { ...read, exitCode: 0, stdout: `${PID}\n${STARTED}\n` } }
+    if (e.argv[0] === '/bin/sh') {
+      probes += 1
+      return { value: { ...read, exitCode: 0, stdout: `${PID}\n${STARTED}\n` } }
+    }
     runs.push({ argv: e.argv, env: e.init?.env ?? {} })
     const command = e.argv[2] ?? ''
+    if (command === 'connect') isConnected = true
+    if (command === 'disconnect') isConnected = false
     const answer = (await setup.cli?.(command, e.argv.slice(3))) ??
       (command === 'status'
-        ? { exitCode: 0, stdout: status({ follower_attached: true }) }
+        ? {
+            exitCode: 0,
+            stdout: isConnected
+              ? status({ connection_id: 'c-1', follower_attached: true }, { meeting_id: 'm-1' })
+              : status({ follower_attached: running > 0 }),
+          }
         : command === 'current'
           ? { exitCode: 0, stdout: current() }
-          : { exitCode: 1 })
+          : command === 'connect' || command === 'disconnect'
+            ? { exitCode: 0, stdout: JSON.stringify({ data: { outcome: `${command}ed` } }) }
+            : { exitCode: 1 })
     return { value: { ...read, stdout: '', ...answer } }
   })
-  on('process.spawn', async function* ($, e) {
+  on('process.spawn', async function* ($, e, next) {
     const args = e.argv.slice(1)
     follows.push(args)
     const failure = setup.followerFails?.(args)
@@ -121,18 +136,24 @@ export function stage(on: On, setup: Setup = {}) {
       return { value: { code: 2, signal: null } }
     }
     spawns += 1
-    if (spawns === 1) {
-      const state = setup.follower ?? 'attached'
-      yield { stream: 'stderr', text: `{"event":"follower","data":{"state":"${state}"}}\n` }
-      for (const text of setup.printed ?? []) yield { stream: 'stdout', text }
-      while (setup.isLive) {
+    running += 1
+    try {
+      if (spawns === 1) {
+        const state = setup.follower ?? 'attached'
+        yield { stream: 'stderr', text: `{"event":"follower","data":{"state":"${state}"}}\n` }
+        for (const text of setup.printed ?? []) yield { stream: 'stdout', text }
+      }
+      while (setup.isLive && !next.signal.aborted) {
         while (later.length > 0) yield { stream: 'stdout', text: later.shift() ?? '' }
         await new Promise<void>(resolve => {
           wake = resolve
+          next.signal.addEventListener('abort', () => resolve(), { once: true })
         })
       }
+      return { value: { code: 0, signal: null } }
+    } finally {
+      running -= 1
     }
-    return { value: { code: 0, signal: null } }
   })
 
   return {
@@ -148,6 +169,8 @@ export function stage(on: On, setup: Setup = {}) {
     panes,
     bare,
     spawns: () => spawns,
+    running: () => running,
+    probes: () => probes,
     print: (text: string) => {
       later.push(text)
       wake()
@@ -162,6 +185,37 @@ export function stage(on: On, setup: Setup = {}) {
 
 export const start = ($: Engine, isInteractive = true) =>
   $.session.start({ cwd: '/work', surface: isInteractive ? 'terminal' : null, isInteractive })
+
+/** What the previous load of the module left in $.state, under its tag. */
+export const seedPanel = (on: On, panel: Record<string, unknown>) => {
+  const before = {
+    app: 'unknown', isInMeeting: false, isConnected: false, isReconnecting: false, room: null,
+    meeting: null, approval: null, isViaMonitor: false, handoffs: [], ...panel,
+  }
+  let isSeeded = true
+  on('state.get', ($, e, next) =>
+    isSeeded && e.key === 'panel' ? { value: { value: { shape: 'panel-2', value: before }, version: 1 } } : next(e))
+  on('state.set', ($, e, next) => {
+    if (e.key === 'panel') isSeeded = false
+    return next(e)
+  })
+}
+
+/** A session whose model loaded the connect-agent skill. */
+export const loadSkill = async ($: Engine, stub: { settle: () => Promise<void> }) => {
+  await start($)
+  const loading = $.tool.call({ tool: 'Skill', skill: 'blixel:connect-agent' })
+  await stub.settle()
+  await loading
+  await stub.settle()
+}
+
+/** A session that ran /blixel:connect, its follower started. */
+export const connectSession = async ($: Engine, stub: { settle: () => Promise<void> }, isInteractive = true) => {
+  await start($, isInteractive)
+  await run($, 'blixel:connect')
+  await stub.settle()
+}
 
 // The kit fills in the fields only the engine sets (origin, presentation).
 export const run = ($: Engine, command: string, args = '') =>

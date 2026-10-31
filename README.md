@@ -73,8 +73,10 @@ so a handoff waits for that, and the status line says so. `/blixel:connect
 disconnect without asking Claude, and the Blixel pane, which `/blixel:status`
 opens (and, in the desktop app, connecting), shows the meeting and the handoffs
 it sent this session, each with who sent it. The status line names the meeting
-too, and points to `/blixel:connect` while Blixel is in one this session is not
-connected to. Without mods, `/blixel:connect` connects before Claude answers, the other two
+too. Nothing runs for Blixel in a session until you connect it, or ask it to, and
+everything stops when the connection ends; `/blixel:status` reads once. Claude Code
+binds a connection to its process, so a session resumed with `claude --resume`
+connects again. Without mods, `/blixel:connect` connects before Claude answers, the other two
 commands ask Claude to use the skill, and the plugin's monitor delivers the handoffs. Where plugin monitors don't run
 either, as in the Claude desktop app, the skill starts a Monitor for them and
 starts it again each time Claude Code stops it after 30 minutes. Without the mod,
