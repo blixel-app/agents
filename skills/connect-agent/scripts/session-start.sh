@@ -3,9 +3,9 @@
 # text, while the session's connection and monitor carry on: without it the
 # model refuses handoffs as background notifications.
 #
-# Every follower of a session is a child of its `claude`, or its shell's command
-# line is, so a session with none stays out of Blixel altogether. Only a clean
-# "no match" says so: anything else asks the app.
+# A session's follower is a child of its `claude`: the mod's itself, a monitor's
+# as the shell that runs it. A session with none has no connection to keep and
+# stays out of Blixel. Only a clean "no match" says so: anything else asks the app.
 pgrep -q -P "${CLAUDE_PID-}" -f 'agent follow' 2>/dev/null
 [ "$?" = 1 ] && exit 0
 status=$("$(dirname "$0")/blixel" agent status 2>/dev/null) || exit 0
