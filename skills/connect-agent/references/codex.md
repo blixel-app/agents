@@ -35,7 +35,7 @@ On failure, by `code`:
 ## Status and disconnect
 
 This thread is connected when `data.session.connection_id` is set. Quitting Codex
-ends the connection, except on the shared app-server (`codex_shared_app_server`),
-where the thread keeps running: disconnect first. A new conversation in the same
+ends the connection, except on Codex's shared app-server, where the thread keeps
+running: disconnect first. A new conversation in the same
 session (`/new`, `/resume`) is another thread and does not receive handoffs, which
 a hook tells the user at its start: connect again from it.
