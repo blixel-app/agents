@@ -16,6 +16,8 @@ export type Setup = {
   isLive?: boolean
   // How the app answers the first follower; a refused one leaves the handoffs to a monitor.
   follower?: 'attached' | 'refused'
+  // What a follower run with these arguments prints on stderr before it exits at once.
+  followerFails?: (args: readonly string[]) => string | undefined
   // Answers each prompt the mod submits; a string drops it with that reason.
   submit?: (text: string) => string | undefined | Promise<string | undefined>
   // Answers `blixel agent <command>` and `blixel room current` (as `current`);
@@ -64,6 +66,7 @@ export function stage(on: On, setup: Setup = {}) {
   on('session.id', () => ({ value: 'session-1' }))
   on('fs.read', () => ({ value: SKILL }))
   const panes: string[] = []
+  const follows: (readonly string[])[] = []
   on('ui.open', ($, e) => {
     panes.push(e.id)
     return { value: { isPlaced: true } }
@@ -106,7 +109,14 @@ export function stage(on: On, setup: Setup = {}) {
           : { exitCode: 1 })
     return { value: { ...read, stdout: '', ...answer } }
   })
-  on('process.spawn', async function* () {
+  on('process.spawn', async function* ($, e) {
+    const args = e.argv.slice(1)
+    follows.push(args)
+    const failure = setup.followerFails?.(args)
+    if (failure !== undefined) {
+      yield { stream: 'stderr', text: `${failure}\n` }
+      return { value: { code: 2, signal: null } }
+    }
     spawns += 1
     if (spawns === 1) {
       const state = setup.follower ?? 'attached'
@@ -129,6 +139,8 @@ export function stage(on: On, setup: Setup = {}) {
     statuses,
     toasts,
     runs,
+    acks: () => runs.filter(run => run.argv[2] === 'ack').map(run => run.argv.slice(3)),
+    follows,
     saved,
     panes,
     bare,

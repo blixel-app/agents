@@ -94,6 +94,92 @@ test('a handoff this session had not yet submitted is submitted when the mod loa
   expect(stub.submitted).toEqual(['Left over'])
 })
 
+test('a handoff is acked as queued once it is saved, while its prompt still waits out a turn', async ($, on) => {
+  let savedAtAck: unknown
+  const stub = stage(on, {
+    printed: [printed('Rename the flag', 'Ana', 7)],
+    submit: () => stub.clock.sleep(60_000).then(() => undefined),
+    cli: command => {
+      if (command === 'ack') savedAtAck = stub.saved.get(`queue:${PID}:${STARTED}`)
+      return { exitCode: 0, stdout: command === 'status' ? status({}) : current() }
+    },
+  })
+
+  await start($)
+  await stub.settle()
+
+  expect(stub.follows).toEqual([['agent', 'follow', '--json', '--acks']])
+  expect(stub.acks()).toEqual([['7', 'queued']])
+  expect(savedAtAck).toEqual({ next: 2, pending: [{ n: 1, text: 'Rename the flag' }] })
+})
+
+test('a handoff keeps its line breaks, and one with only its prompt still arrives', async ($, on) => {
+  const line = JSON.stringify({ id: 1, prompt: 'First Second', message: 'First\nSecond', sender_name: 'Ana' })
+  const stub = stage(on, { printed: [`${line}\n`, printed('No message beside it', 'Ana', 2)] })
+
+  await start($)
+  await stub.settle()
+
+  expect(stub.submitted).toEqual(['First\nSecond', 'No message beside it'])
+})
+
+const oldCLI = (args: readonly string[]) =>
+  args.includes('--acks')
+    ? '{"error":{"category":"usage","code":"usage","exit_status":2,"message":"Unknown option \'--acks\'"},"schema_version":1}'
+    : undefined
+
+test('a CLI without --acks follows as before, and nothing is acked', async ($, on) => {
+  const stub = stage(on, { followerFails: oldCLI, printed: [printed('Rename the flag')] })
+
+  await start($)
+  await stub.settle()
+  await stub.clock.advance(1_000)
+  await stub.settle()
+
+  expect(stub.follows).toEqual([['agent', 'follow', '--json', '--acks'], ['agent', 'follow', '--json']])
+  expect(stub.submitted).toEqual(['Rename the flag'])
+  expect(stub.acks()).toEqual([])
+})
+
+test('a follower that fails for any other reason keeps asking for acks', async ($, on) => {
+  let fails = 1
+  const stub = stage(on, {
+    followerFails: () =>
+      fails-- > 0 ? '{"error":{"code":"usage","message":"Unknown option \'--other\'"}}' : undefined,
+  })
+
+  await start($)
+  await stub.settle()
+  await stub.clock.advance(1_000)
+  await stub.settle()
+
+  expect(stub.follows).toEqual([['agent', 'follow', '--json', '--acks'], ['agent', 'follow', '--json', '--acks']])
+})
+
+for (const [app, code] of [
+  ['an older app', 'incompatible_protocol'],
+  ['an app that closed', 'app_unavailable'],
+]) {
+  test(`an ack ${app} cannot take is dropped, and the handoff still runs`, async ($, on) => {
+    const stub = stage(on, {
+      printed: [printed('Rename the flag', 'Ana', 7)],
+      cli: command =>
+        command === 'ack'
+          ? { exitCode: 5, stderr: `{"error":{"code":"${code}","message":"No"}}\n` }
+          : { exitCode: 0, stdout: command === 'status' ? status({}) : current() },
+    })
+
+    await start($)
+    await stub.settle()
+    await stub.clock.advance(60_000)
+    await stub.settle()
+
+    expect(stub.submitted).toEqual(['Rename the flag'])
+    expect(stub.acks()).toEqual([['7', 'queued']])
+    expect(stub.toasts).toEqual([])
+  })
+}
+
 test('the status line counts the handoffs waiting for the session', async ($, on) => {
   const stub = stage(on, { printed: [printed('One', 'Ana', 1) + printed('Two', 'Ana', 2)], submit: () => 'busy' })
 

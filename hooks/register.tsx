@@ -145,6 +145,7 @@ export const register: Register = on => {
     const cli = `${$.plugin.root}/bin/blixel`
 
     let queue = queueFrom(await $.store.get(key).catch(() => undefined))
+    let acks = true
     let connected = false
     let attachment: Attachment = 'stopped'
     let delivering = false
@@ -229,18 +230,25 @@ export const register: Register = on => {
     // printed this one, so the queue is the only copy left.
     const receive = (line: string) => {
       const printed = jsonLines(line)[0]
-      if (typeof printed?.prompt !== 'string' || printed.prompt.trim() === '') return
-      const text: string = printed.prompt
+      // `message` keeps the line breaks; a handoff that fills a frame comes without it.
+      const text = [printed?.message, printed?.prompt].find(one => typeof one === 'string' && one.trim() !== '')
+      if (text === undefined) return
       const sender = typeof printed.sender_name === 'string' ? printed.sender_name : ''
       const handoff: PanelHandoff = { n: queue.next, text, sender, at: Date.now(), state: 'waiting' }
       queue = { next: queue.next + 1, pending: [...queue.pending, { n: handoff.n, text }] }
       view = { ...view, handoffs: [handoff, ...view.handoffs].slice(0, HISTORY) }
       show()
-      void save().then(deliver)
+      void save().then(() => {
+        // Once, whatever it answers: after an app restart the same id can be
+        // another handoff, and an app too old for acks has answered already.
+        if (acks && Number.isInteger(printed.id)) void call(['agent', 'ack', String(printed.id), 'queued'])
+        return deliver()
+      })
     }
 
     const notice = (line: string) => {
       const event = jsonLines(line)[0]
+      if (event?.error?.code === 'usage' && event.error.message?.includes('--acks')) acks = false
       if (event?.event !== 'follower' || typeof event.data?.state !== 'string') return
       attachment = event.data.state
       show()
@@ -254,7 +262,7 @@ export const register: Register = on => {
         let out = ''
         let err = ''
         try {
-          const child = $.process.spawn({ argv: [cli, 'agent', 'follow', '--json'], env: await env() })
+          const child = $.process.spawn({ argv: [cli, 'agent', 'follow', '--json', ...(acks ? ['--acks'] : [])], env: await env() })
           for await (const { stream, text } of child) {
             if (stream === 'stdout') out = lines(out + text, receive)
             else err = lines(err + text, notice)
