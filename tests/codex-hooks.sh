@@ -355,7 +355,8 @@ done
 silent "only a connect starts one" "$(cat "$log")"
 
 for command in 'blixel agent connect' '/x/skills/connect-agent/scripts/blixel agent connect --approval ask' \
-	'\"/x y/scripts/blixel\" agent connect' "cd /x && blixel agent connect" "'/x y/blixel' agent connect"; do
+	'\"/x y/scripts/blixel\" agent connect' "cd /x && blixel agent connect" "'/x y/blixel' agent connect" \
+	'cd /x\nblixel agent connect'; do
 	reset
 	bash_call "$command"
 	started "the model runs $command"

@@ -7,7 +7,7 @@
 
 runs_connect() {
 	# Not a mention of it, as in `grep "blixel agent connect"`.
-	case " $(field tool_input.command "$input")" in
+	case " $(field tool_input.command "$input" | tr '\n' ' ')" in
 	*[\ \;\&\|\(/]blixel\ agent\ connect* | *[\ \;\&\|\(/]blixel[\"\']\ agent\ connect*) ;;
 	*) return 1 ;;
 	esac
