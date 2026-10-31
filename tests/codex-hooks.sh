@@ -359,7 +359,7 @@ first=$host
 ask
 : >"$log"
 start "$thread"
-wait "$host"
+until_true "a second helper leaves" stopped "$host"
 never "a second helper" "$(cat "$log")" "agent follow --json"
 cp "$dir/follower" "$dir/follower.first"
 : >"$log"
