@@ -1,23 +1,22 @@
 # pi
 
 The Blixel package's extension delivers each handoff into this session as a prompt,
-which runs as a turn of its own, after any turn in progress. Only the user can connect,
-with no model turn: `/blixel:connect [ask|direct]`, `/blixel:status` and
-`/blixel:disconnect`, or `connect blixel`, `blixel status` and `disconnect blixel` as a
-whole prompt.
+which runs as a turn of its own, after any turn in progress. The user typing
+`/blixel:connect [ask|direct]`, `/blixel:status` or `/blixel:disconnect`, or
+`connect blixel`, `blixel status` or `disconnect blixel`, as a whole prompt gets the
+answer with no model turn; this file is for every other way of asking.
 
-Don't run `blixel agent` here: Blixel can't tell a command you run belongs to this
-session, so it fails with `not_in_agent_session`. When asked to connect, check or
-disconnect, ask the user to type the command.
+Run `blixel agent connect`, `status` and `disconnect` with the bash tool, by the skill's
+full path. The extension sees each one and makes it this session's, and starts following
+the call for a connect.
 
-## After a failed connect
+## Connect failures
 
-The extension shows the user the `message` and `hint`. If they ask what to do:
-
-- `monitor_not_running`: the extension's relay did not attach. Blixel 0.16.0 or later
-  has it: ask them to update Blixel and type `/blixel:connect`.
-- Anything else: as the skill says, with the user typing the command in place of
-  running it.
+- `monitor_not_running`: the extension's relay did not attach. Blixel 0.16.0 or later has
+  it: ask the user to update Blixel, then connect again.
+- `not_in_agent_session`: the command did not run through the bash tool, or the Blixel
+  extension is not installed. Ask the user to run `pi install git:github.com/blixel-app/skills`.
+- Anything else: as the skill says.
 
 ## Status and disconnect
 

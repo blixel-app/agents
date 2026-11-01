@@ -1,7 +1,7 @@
 #!/bin/sh
 # The pi package, installed into real pi and driven over its RPC mode, against a
-# stand-in `blixel` and a model endpoint nothing listens on: `claude plugin test` has
-# no processes, and no fake of pi can show what pi does with a prompt.
+# stand-in `blixel` and a stand-in model: `claude plugin test` has no processes, and no
+# fake of pi can show what pi does with a prompt.
 root=$(cd "$(dirname "$0")/.." && pwd -P)
 command -v pi >/dev/null || {
 	echo "pi: skipped, pi is not installed"
@@ -50,13 +50,33 @@ printf '#!/bin/sh\necho "$*" >>"%s/planted-ran"\n' "$dir" >"$dir/planted/blixel"
 chmod +x "$dir/planted/blixel"
 
 echo '{"retry":{"enabled":false}}' >"$dir/agent/settings.json"
-cat >"$dir/agent/models.json" <<'MODELS'
-{"providers":{"stub":{"baseUrl":"http://127.0.0.1:9/v1","api":"openai-completions","apiKey":"none","models":[{"id":"none"}]}}}
+port=$((30000 + $$ % 20000))
+cat >"$dir/agent/models.json" <<MODELS
+{"providers":{"stub":{"baseUrl":"http://127.0.0.1:$port/v1","api":"openai-completions","apiKey":"none","models":[{"id":"none"}]}}}
 MODELS
 
 # Hears each input before the package does, and each request after it.
 cat >"$dir/listen.ts" <<LISTEN
 import * as fs from "node:fs";
+import * as http from "node:http";
+
+// The model: runs what model-runs holds with the bash tool, and answers nothing else.
+const chunk = (delta: any, finish_reason: any = null) =>
+	"data: " + JSON.stringify({ id: "1", object: "chat.completion.chunk", choices: [{ index: 0, delta, finish_reason }] }) + "\n\n";
+const server = http.createServer((request, response) => {
+	request.resume();
+	request.on("end", () => {
+		if (!fs.existsSync("$dir/model-runs")) return void request.socket.destroy();
+		const command = fs.readFileSync("$dir/model-runs", "utf8");
+		fs.rmSync("$dir/model-runs");
+		const call = { index: 0, id: "c1", type: "function", function: { name: "bash", arguments: JSON.stringify({ command }) } };
+		response.writeHead(200, { "content-type": "text/event-stream" });
+		response.end(chunk({ role: "assistant", tool_calls: [call] }) + chunk({}, "tool_calls") + "data: [DONE]\n\n");
+	});
+});
+server.listen($port, "127.0.0.1");
+server.unref();
+
 export default function (pi: any) {
 	const hear = (o: any) => fs.appendFileSync("$heard", JSON.stringify(o) + "\n");
 	pi.on("input", (e: any) => {
@@ -94,7 +114,7 @@ start_pi() {
 	rm -f "$dir/in"
 	mkfifo "$dir/in"
 	(cd "$dir" && exec env PI_CODING_AGENT_DIR="$dir/agent" PI_SKIP_VERSION_CHECK=1 PATH="$dir/planted:$PATH" "$@" \
-		pi --mode rpc --no-session --no-tools --model stub/none -e "$dir/listen.ts" <"$dir/in" >>"$dir/out" 2>"$dir/err") &
+		pi --mode rpc --no-session --tools bash --model stub/none -e "$dir/listen.ts" <"$dir/in" >>"$dir/out" 2>"$dir/err") &
 	pi=$!
 	exec 3>"$dir/in"
 	rpc '{"type":"get_state","id":"state"}'
@@ -263,6 +283,39 @@ stop_pi
 logged "agent disconnect pid=$pi key=$key" || fail "quitting did not disconnect: $(cat "$log")"
 logged "relay stopped" || fail "quitting left the relay running"
 [ ! -e "$(cat "$dir/socket")" ] || fail "quitting left the socket"
+
+# The model does all of it by itself, in a session nothing else has touched
+
+model_runs() { # a command for the model's bash tool
+	: >"$dir/out"
+	printf '%s' "$1" >"$dir/model-runs"
+	rpc "{\"type\":\"prompt\",\"message\":\"do it\"}"
+	waits_for holds "$dir/out" '"type":"tool_execution_end"' || fail "the model ran nothing: $1"
+	waits_for holds "$dir/out" '"type":"agent_end"' || fail "no run ended: $1"
+}
+
+: >"$log"
+start_pi
+model_runs 'grep "blixel agent connect" /dev/null'
+never "a mention of connect" "agent relay"
+
+model_runs "\"$dir/bin/blixel\" agent status"
+logged "agent status pid=$pi key=$key provider=pi name=pi" || fail "the model's status: wrong session: $(cat "$log")"
+model_runs "\"$dir/bin/blixel\" agent connect"
+logged "agent connect pid=$pi key=$key provider=pi name=pi" || fail "the model's connect: wrong session: $(cat "$log")"
+logged "agent relay --submit $root/pi/submit.sh pid=$pi key=$key provider=pi name=pi" ||
+	fail "the model's connect started no relay: $(cat "$log")"
+waits_for alive || fail "the model's connect left no relay running"
+: >"$log"
+model_runs "\"$dir/bin/blixel\" agent connect"
+[ "$(grep -c 'agent relay' "$log")" = 0 ] || fail "the model's second connect started a second relay"
+handoff "after the model connected"
+logged "submit exit=0" || fail "a handoff did not reach pi after the model connected"
+model_runs "\"$dir/bin/blixel\" agent disconnect"
+logged "agent disconnect pid=$pi key=$key" || fail "the model's disconnect: wrong session: $(cat "$log")"
+: >"$dir/end-relay"
+waits_for gone || fail "the relay outlived the model's disconnect"
+stop_pi
 
 # Nobody to take a handoff: that is doubt, never queued
 

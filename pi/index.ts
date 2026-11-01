@@ -15,6 +15,8 @@ const CLI = path.join(SKILL, "scripts", "app-cli");
 const SUBMIT = path.join(HERE, "submit.sh");
 // The prompts that act with no model, the same as Claude's mod and Codex's hooks read them.
 const PHRASE = /^(?:blixel[ :](connect|disconnect|status)|(connect|disconnect|status) blixel)(?: (ask|direct))?$/;
+// A command the model runs, not a mention of one, as in `grep "blixel agent connect"`.
+const RUNS = /(?:^|[\s;&|(/])blixel["']? agent (connect|disconnect|status)\b/;
 
 type Verb = "connect" | "disconnect" | "status";
 type Answer = { data?: any; error?: { message?: string; hint?: string } };
@@ -35,13 +37,15 @@ export default function (pi: ExtensionAPI) {
 	let folder: string | undefined;
 	let guidance: string | undefined;
 
-	const environment = (ctx: ExtensionContext) => ({
-		...process.env,
-		BLIXEL_AGENT_PID: String(process.pid),
-		BLIXEL_AGENT_PROVIDER: "pi",
-		BLIXEL_AGENT_NAME: "pi",
-		BLIXEL_AGENT_SESSION_KEY: ctx.sessionManager.getSessionId(),
-	});
+	// In pi's own environment, as its bash tool copies that, so what the model runs is
+	// this session too.
+	const environment = (ctx: ExtensionContext) =>
+		Object.assign(process.env, {
+			BLIXEL_AGENT_PID: String(process.pid),
+			BLIXEL_AGENT_PROVIDER: "pi",
+			BLIXEL_AGENT_NAME: "pi",
+			BLIXEL_AGENT_SESSION_KEY: ctx.sessionManager.getSessionId(),
+		});
 
 	const ask = (ctx: ExtensionContext, ...args: string[]) =>
 		new Promise<Answer>((resolve) =>
@@ -164,6 +168,14 @@ export default function (pi: ExtensionAPI) {
 		if (!said || !verb || (said[3] && verb !== "connect")) return { action: "continue" };
 		ctx.ui.notify(await answers[verb](ctx, said[3]), "info");
 		return { action: "handled" };
+	});
+
+	pi.on("tool_call", async (event, ctx) => {
+		if (event.toolName !== "bash") return;
+		const verb = RUNS.exec(String(event.input.command))?.[1];
+		if (!verb) return;
+		environment(ctx);
+		if (verb === "connect" && !relay) start(ctx);
 	});
 
 	// A connect with no model never reads the skill, and a section outlasts a compaction.

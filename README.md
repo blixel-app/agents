@@ -83,7 +83,7 @@ request like any other.
 | Connect by command | No model | Connects, then Claude answers | No model | No model | None |
 | Status and disconnect by command | No model | Asks Claude | No model | No model | None |
 | Phrases | No model | Reach Claude as a prompt | No model | No model | Reach the model as a prompt |
-| Asking in words | Claude uses the skill | Claude uses the skill | Codex uses the skill, with your approval | pi asks you to type the command | Claude Code only |
+| Asking in words | Claude uses the skill | Claude uses the skill | Codex uses the skill, with your approval | pi uses the skill | Claude Code only |
 | A handoff arrives as | A prompt of its own | A monitor's notification | A queued message | A prompt of its own | A monitor's notification |
 | Handoff rules kept after `/clear` or a compaction | Yes | Yes | Yes | Yes | No: connect again |
 | Meeting in the status line, Blixel pane | Yes | No | No | No | No |
@@ -114,7 +114,7 @@ the `blixel` skill, as does any other agent.
 | Claude Code, mods off | A hook and the command's `!` line | The plugin's monitor | Monitor notification |
 | Claude Code, skills only | The model | A Monitor the model starts | Monitor notification |
 | Codex | Hooks | A relay in an async hook | `codex queue` |
-| pi | The extension | A relay the extension starts | `pi.sendUserMessage` |
+| pi | The extension, or the model's own command | A relay the extension starts | `pi.sendUserMessage` |
 
 ### Claude Code
 
@@ -203,6 +203,9 @@ covers `/blixel:connect`, the monitor and the mod. The skill and its `allowed-to
 name the CLI by full path, so a development build's has to be named to the session
 there, and it asks before it runs. `tests/claude-routes.sh` fails if a route goes back
 to a bare `blixel`.
+
+Every adapter lets the model do all a person can: asked in words, it connects, checks and
+disconnects. Commands and phrases are a shortcut past the model, never the only route.
 
 `skills/connect-agent/SKILL.md` holds what every agent shares, and no skill's text names
 an agent: each agent's part is in `references/`, the file a failed
