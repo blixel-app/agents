@@ -61,6 +61,7 @@ export function stage(on: On, setup: Setup = {}) {
   const toasts: string[] = []
   const runs: Run[] = []
   const saved = new Map<string, unknown>(Object.entries(setup.stored ?? {}))
+  const started: string[] = []
   let spawns = 0
   let running = 0
   let probes = 0
@@ -110,8 +111,10 @@ export function stage(on: On, setup: Setup = {}) {
     const read = { stderr: '', isStdoutTruncated: false, isStderrTruncated: false }
     if (e.argv[0] === '/bin/sh') {
       probes += 1
+      started.push(e.argv.at(-1) ?? '')
       return { value: { ...read, exitCode: setup.probeFails ? 1 : 0, stdout: `${PID}\n${STARTED}\n` } }
     }
+    started.push(e.argv[0] ?? '')
     runs.push({ argv: e.argv, env: e.init?.env ?? {} })
     const command = e.argv[2] ?? ''
     if (command === 'connect') isConnected = true
@@ -133,6 +136,7 @@ export function stage(on: On, setup: Setup = {}) {
   })
   on('process.spawn', async function* ($, e, next) {
     const args = e.argv.slice(1)
+    started.push(e.argv[0] ?? '')
     follows.push(args)
     const failure = setup.followerFails?.(args)
     if (failure !== undefined) {
@@ -175,6 +179,7 @@ export function stage(on: On, setup: Setup = {}) {
     spawns: () => spawns,
     running: () => running,
     probes: () => probes,
+    started,
     print: (text: string) => {
       later.push(text)
       wake()

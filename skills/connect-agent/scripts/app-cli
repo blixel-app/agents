@@ -1,0 +1,5 @@
+#!/bin/sh
+# The CLI for what runs outside the sandbox. Its pid stays the CLI's, as the mod stops
+# a follower by the pid it started.
+. "${0%/*}/path.sh"
+exec "${0%/*}/blixel" "$@"

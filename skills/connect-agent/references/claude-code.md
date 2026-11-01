@@ -3,8 +3,11 @@
 The user can also type `/blixel:connect`, `/blixel:status` and
 `/blixel:disconnect`.
 
-If the shell can't find `blixel`, use `scripts/blixel` beside the skill in a
-Monitor's command too.
+`blixel` here always means
+`/Applications/Blixel.app/Contents/Resources/bin/blixel`, by that full path, in a Monitor's
+command too: a command run outside the sandbox and looked up on PATH runs whatever a
+folder there holds. If that file doesn't exist, use
+`~/Applications/Blixel.app/Contents/Resources/bin/blixel` the same way.
 
 ## How handoffs arrive
 

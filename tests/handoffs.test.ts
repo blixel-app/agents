@@ -125,6 +125,17 @@ const oldCLI = (args: readonly string[]) =>
     ? '{"error":{"category":"usage","code":"usage","exit_status":2,"message":"Unknown option \'--acks\'"},"schema_version":1}'
     : undefined
 
+test('nothing the mod starts is looked up on PATH, as it runs outside the sandbox', async ($, on) => {
+  const stub = stage(on)
+
+  await connectSession($, stub)
+
+  const [probe, ...clis] = stub.started
+  expect(probe).toMatch(/exec \/bin\/ps /)
+  expect(clis.length).toBeGreaterThan(1)
+  for (const cli of clis) expect(cli).toMatch(/\/skills\/connect-agent\/scripts\/app-cli$/)
+})
+
 test('a CLI without --acks follows as before, and nothing is acked', async ($, on) => {
   const stub = stage(on, { followerFails: oldCLI, printed: [printed('Rename the flag')] })
 
@@ -626,7 +637,7 @@ test("loading the skill attaches the mod's follower before the skill's monitor c
 
 const stopHook = (task: Record<string, unknown>) =>
   ({ background_tasks: [{ id: 'task-1', status: 'running', ...task }] }) as never
-const plugged = { type: 'shell', description: 'Blixel handoffs', command: '"/p"/bin/blixel agent follow' }
+const plugged = { type: 'shell', description: 'Blixel handoffs', command: '"/p"/skills/connect-agent/scripts/app-cli agent follow' }
 const verdict = (decision: string) => () => ({ decision }) as never
 
 test("the plugin's monitor is stopped when the turn that armed it ends, while the mod follows", async ($, on) => {

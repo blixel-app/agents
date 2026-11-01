@@ -13,7 +13,7 @@ failed=0
 hook() {
 	printf '#!/bin/sh\ntouch "%s"\ncat <<ANSWER\n%s\nANSWER\nexit %s\n' "$dir/asked" "$1" "${2:-0}" >"$dir/blixel"
 	chmod +x "$dir/blixel"
-	PATH="$dir:/usr/bin:/bin" CLAUDE_PID=${claude-$$} "$root/skills/connect-agent/scripts/session-start.sh" | tr -s ' \n' ' '
+	BLIXEL_HOOK_PATH="$dir:/usr/bin:/bin" CLAUDE_PID=${claude-$$} "$root/skills/connect-agent/scripts/session-start.sh" | tr -s ' \n' ' '
 }
 
 answer() {
@@ -38,6 +38,7 @@ told=$(hook "$(answer '{"claude_pid":7,"connection_id":"c-1","follower_attached"
 tells "connected" "$told" "connected to the user's Blixel meeting"
 tells "connected" "$told" "$rules"
 tells "connected" "$told" "$restart"
+tells "connected" "$told" '`/Applications/Blixel.app/Contents/Resources/bin/blixel`'
 
 told=$(hook "$(answer '{"agent_pid":7,"claude_pid":7,"connection_id":"c-1"}')")
 tells "connected, a key sorting first" "$told" "$rules"

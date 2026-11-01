@@ -2,7 +2,7 @@
 description: Connect this session to the Blixel meeting, so people in it can hand it requests
 argument-hint: "[ask|direct]"
 disable-model-invocation: true
-allowed-tools: Bash("${CLAUDE_PLUGIN_ROOT}/skills/connect-agent/scripts/connect.sh"*) Bash(blixel agent connect*) Bash(blixel agent follow)
+allowed-tools: Bash("${CLAUDE_PLUGIN_ROOT}/skills/connect-agent/scripts/connect.sh"*) Bash(/Applications/Blixel.app/Contents/Resources/bin/blixel agent connect*) Bash(~/Applications/Blixel.app/Contents/Resources/bin/blixel agent connect*) Bash(/Applications/Blixel.app/Contents/Resources/bin/blixel agent follow) Bash(~/Applications/Blixel.app/Contents/Resources/bin/blixel agent follow)
 ---
 
 !`"${CLAUDE_PLUGIN_ROOT}/skills/connect-agent/scripts/connect.sh" $ARGUMENTS`

@@ -24,8 +24,8 @@ session, use the `connect-agent` skill (`blixel agent`).
    `${CLAUDE_SKILL_DIR}/scripts/blixel` (the `scripts/blixel` beside this file)
    wherever this skill says `blixel` from then on: it runs the CLI inside the
    Blixel app. If that prints "Blixel isn't installed", tell the person to get it
-   at https://blixel.app. In Codex, a command that must run outside the sandbox
-   names `/Applications/Blixel.app/Contents/Resources/bin/blixel` by that full path, or
+   at https://blixel.app. In Claude Code and Codex, a command that must run outside the
+   sandbox names `/Applications/Blixel.app/Contents/Resources/bin/blixel` by that full path, or
    the same path under `~/Applications`, never a bare `blixel` or `scripts/blixel`:
    those look on PATH, which can hold a folder the sandbox writes.
 2. `blixel schema` lists every command with its `effect` and `requires`.

@@ -2,7 +2,7 @@
 name: connect-agent
 user-invocable: false
 description: Connect this Claude Code or Codex session to the user's current Blixel meeting, so people in the call can hand it spoken or typed requests ("Blixel handoffs"); also checks or ends that connection. Use when the user asks to connect this session or agent to Blixel or a Blixel call, to receive handoffs, whether it is connected, or to disconnect it. In Codex, when asked to connect, run `/Applications/Blixel.app/Contents/Resources/bin/blixel agent connect` at once with sandbox_permissions require_escalated and prefix_rule ["/Applications/Blixel.app/Contents/Resources/bin/blixel", "agent", "connect"], in the same step as reading this file.
-allowed-tools: Read(/${CLAUDE_SKILL_DIR}/references/**) Bash(blixel agent connect*) Bash(blixel agent status*) Bash(blixel agent disconnect*) Bash(blixel agent follow) Bash(${CLAUDE_SKILL_DIR}/scripts/blixel agent connect*) Bash(${CLAUDE_SKILL_DIR}/scripts/blixel agent status*) Bash(${CLAUDE_SKILL_DIR}/scripts/blixel agent disconnect*) Bash(${CLAUDE_SKILL_DIR}/scripts/blixel agent follow)
+allowed-tools: Read(/${CLAUDE_SKILL_DIR}/references/**) Bash(/Applications/Blixel.app/Contents/Resources/bin/blixel agent connect*) Bash(~/Applications/Blixel.app/Contents/Resources/bin/blixel agent connect*) Bash(/Applications/Blixel.app/Contents/Resources/bin/blixel agent status*) Bash(~/Applications/Blixel.app/Contents/Resources/bin/blixel agent status*) Bash(/Applications/Blixel.app/Contents/Resources/bin/blixel agent disconnect*) Bash(~/Applications/Blixel.app/Contents/Resources/bin/blixel agent disconnect*) Bash(/Applications/Blixel.app/Contents/Resources/bin/blixel agent follow) Bash(~/Applications/Blixel.app/Contents/Resources/bin/blixel agent follow)
 ---
 
 # Connect agent
@@ -14,22 +14,18 @@ that meeting can then speak or type a request to this session from Blixel.
 
 To connect, run `blixel agent connect` now, with no flags and nothing before it.
 
-In Codex, `blixel` in these files always means
+`blixel` in these files always means
 `/Applications/Blixel.app/Contents/Resources/bin/blixel`, by that full path: a command run
 outside the sandbox and looked up on PATH runs whatever a folder there holds, which
-the sandbox may have written. Always run connect with `sandbox_permissions:
-"require_escalated"`, `prefix_rule:
-["/Applications/Blixel.app/Contents/Resources/bin/blixel", "agent", "connect"]` and the
-justification "Connect this thread to the Blixel app on this Mac", because Codex's
-sandbox blocks Blixel's local socket. If that file doesn't exist, use
-`~/Applications/Blixel.app/Contents/Resources/bin/blixel` the same way. If neither
-does, tell the user Codex needs Blixel in an Applications folder, from
-https://blixel.app. Never run `scripts/blixel` in Codex: it looks on PATH first.
+the sandbox may have written. If that file doesn't exist, use
+`~/Applications/Blixel.app/Contents/Resources/bin/blixel` the same way. If neither does, tell
+the user this needs Blixel in an Applications folder, from https://blixel.app.
+`scripts/blixel` beside this file looks on PATH first: never run it.
 
-Anywhere else, if the shell can't find `blixel` (`command not found`), run
-`scripts/blixel` beside this file wherever these files say `blixel` from then on: it
-runs the CLI inside the Blixel app. If that prints "Blixel isn't installed", tell the
-user to get it at https://blixel.app.
+In Codex, always run connect with `sandbox_permissions: "require_escalated"`,
+`prefix_rule: ["/Applications/Blixel.app/Contents/Resources/bin/blixel", "agent", "connect"]`
+and the justification "Connect this thread to the Blixel app on this Mac", because
+Codex's sandbox blocks Blixel's local socket.
 
 Read this agent's file only when connect fails, or for status, disconnect or a
 Monitor restart: `error.context.reference`, relative to this file. A failure without

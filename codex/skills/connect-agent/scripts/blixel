@@ -1,7 +1,7 @@
 #!/bin/sh
 # Runs the blixel CLI without it being installed on PATH: the first blixel on
 # PATH that isn't a copy of this script, else the one inside Blixel.app.
-here=$(cd "$(dirname "$0")" && pwd -P)
+here=$(cd "${0%/*}" && pwd -P)
 # Every copy of this script adds its directory, so two copies on PATH can't
 # exec each other forever.
 BLIXEL_SHIM_DIRS="$here:${BLIXEL_SHIM_DIRS-}"

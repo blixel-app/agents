@@ -144,7 +144,9 @@ export const register: Register = on => {
     // nobody to hand a prompt to and is left alone.
     if (!e.isInteractive && (await $.env.get('CLAUDE_CODE_ENTRYPOINT')) !== 'claude-desktop') return started
 
-    const cli = `${$.plugin.root}/bin/blixel`
+    // The mod's processes run outside the sandbox, so nothing they start may be found
+    // on the session's PATH.
+    const cli = `${$.plugin.root}/skills/connect-agent/scripts/app-cli`
 
     // Nothing runs in a session until Blixel is invoked in it.
     let pid = 0
@@ -160,7 +162,7 @@ export const register: Register = on => {
         // inherits its parent's: the mod's processes are children of this
         // session's own `claude`, the process the app checks callers against.
         const probe = await $.process
-          .run(['/bin/sh', '-c', 'echo "$PPID"; exec ps -o lstart= -p "$PPID"'])
+          .run(['/bin/sh', '-c', 'echo "$PPID"; exec /bin/ps -o lstart= -p "$PPID"'])
           .catch(() => undefined)
         const [pidText = '', startedAt = ''] = probe?.stdout.split('\n') ?? []
         pid = Number(pidText.trim())

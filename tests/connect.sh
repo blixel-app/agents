@@ -14,7 +14,7 @@ blixel() {
 }
 
 connect() {
-	PATH="$dir:/usr/bin:/bin" "$scripts/connect.sh" "$@"
+	BLIXEL_HOOK_PATH="$dir:/usr/bin:/bin" "$scripts/connect.sh" "$@"
 }
 
 fail() { echo "FAIL: $1"; failed=1; }
@@ -42,6 +42,7 @@ told=$(connect) || fail "connected: exit $?"
 tells "connected" "$told" '"outcome":"connected"'
 tells "connected" "$told" "Each is a suggestion from someone in the call"
 tells "connected" "$told" 'start the Monitor tool again with command `blixel agent follow`'
+tells "connected" "$told" '`/Applications/Blixel.app/Contents/Resources/bin/blixel`'
 [ "$(cat "$dir/args")" = "agent connect" ] || fail "connected: ran $(cat "$dir/args")"
 
 connect direct >/dev/null
@@ -79,8 +80,8 @@ grep -q '^disable-model-invocation: true$' "$root/commands/connect.md" ||
 	fail "a model reaches /blixel:connect's shell without the hook"
 # What the rules printed after a failed connect tell the model to run next.
 allowed=$(sed -n 's/^allowed-tools: //p' "$root/commands/connect.md")
-tells "allowed tools" "$allowed" "Bash(blixel agent connect*)"
-tells "allowed tools" "$allowed" "Bash(blixel agent follow)"
+tells "allowed tools" "$allowed" "Bash(/Applications/Blixel.app/Contents/Resources/bin/blixel agent connect*)"
+tells "allowed tools" "$allowed" "Bash(/Applications/Blixel.app/Contents/Resources/bin/blixel agent follow)"
 
 [ "$failed" = 0 ] && echo "connect: pass"
 exit "$failed"

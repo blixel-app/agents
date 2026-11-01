@@ -20,13 +20,13 @@
     "monitors": [
       {
         "name": "handoffs",
-        "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/blixel agent follow",
+        "command": "\"${CLAUDE_PLUGIN_ROOT}\"/skills/connect-agent/scripts/app-cli agent follow",
         "description": "Blixel handoffs",
         "when": "on-skill-invoke:blixel:connect-agent"
       },
       {
         "name": "handoffs-connect",
-        "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/blixel agent follow",
+        "command": "\"${CLAUDE_PLUGIN_ROOT}\"/skills/connect-agent/scripts/app-cli agent follow",
         "description": "Blixel handoffs",
         "when": "on-skill-invoke:blixel:connect"
       }
