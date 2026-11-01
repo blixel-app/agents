@@ -2,8 +2,8 @@
 
 The Blixel plugin's hooks queue each handoff into this thread with `codex queue`, as
 a message that runs as a turn of its own, after the current one. The user typing
-`$blixel:connect`, `$blixel:status` or `$blixel:disconnect`, or `connect blixel`, as
-a whole prompt gets the answer with no model turn; this file is for every other way
+`$blixel:connect`, `$blixel:status` or `$blixel:disconnect`, or `connect blixel`,
+`blixel status` or `disconnect blixel`, as a whole prompt gets the answer with no model turn; this file is for every other way
 of asking.
 
 ## Running `blixel agent`
@@ -23,8 +23,9 @@ On failure, by `code`:
 
 - `monitor_not_running`: the plugin's hooks are not following this thread. Codex
   skips hooks nobody trusted, and they stop waiting after 2 minutes on an approval.
-  Don't run it again: ask the user to update the Blixel plugin, run `/hooks`, trust
-  its hooks, and type `$blixel:connect`.
+  Don't run it again: ask the user to trust its hooks, with **Review hooks** in the
+  ChatGPT app or `/hooks` in a terminal, updating the Blixel plugin first if it is
+  old, and to type `$blixel:connect`.
 - `socket_blocked`, `agent_unverified`, or `app_unavailable` from a command that ran
   inside the sandbox: the sandbox stopped it, whatever the message says. A sandboxed
   command can read `app_unavailable` with the app open, and an older Blixel's

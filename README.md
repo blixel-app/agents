@@ -70,7 +70,8 @@ exactly as your message template in Blixel's Settings › Agents makes it. After
 stop a turn with Esc, Claude Code holds back new prompts until you send a message,
 so a handoff waits for that, and the status line says so. `/blixel:connect
 [ask|direct]`, `/blixel:status` and `/blixel:disconnect` connect, check and
-disconnect without asking Claude, and the Blixel pane, which `/blixel:status`
+disconnect without asking Claude, as do `connect blixel`, `blixel status` and
+`disconnect blixel` as a prompt of their own, and the Blixel pane, which `/blixel:status`
 opens (and, in the desktop app, connecting), shows the meeting and the handoffs
 it sent this session, each with who sent it. The status line names the meeting
 too. Nothing runs for Blixel in a session until you connect it, or ask it to, and
@@ -89,13 +90,13 @@ Connecting needs Blixel in `/Applications` or `~/Applications`.
 
 Installed as a skill only (`npx skills add`), connecting still works, but after `/clear` or a compaction ask the session to connect to Blixel again, or it will not act on the handoffs it keeps receiving.
 
-In Codex, trust the plugin's hooks when Codex asks at start, or later in `/hooks`,
-and again after an update that changes them: without them no handoff arrives. Then
+In Codex, trust the plugin's hooks when Codex asks at start, or later in `/hooks`
+(**Review hooks** in the ChatGPT app), and again after an update that changes them: without them no handoff arrives. Then
 pick `$blixel:connect` (type `$con`, then Enter twice), with `ask` or `direct` after
 it to choose whether Blixel asks you before each handoff. Typing `connect blixel`,
 `blixel connect` or `blixel:connect` as a prompt of its own does the same, and
-`$blixel:status` and `$blixel:disconnect` check and disconnect. None of these calls a
-model. Nothing runs for Blixel in a session until you connect it or ask it to, beyond
+`$blixel:status` and `$blixel:disconnect`, or `blixel status` and `disconnect blixel`,
+check and disconnect. None of these calls a model. Nothing runs for Blixel in a session until you connect it or ask it to, beyond
 a filter of about 6 ms on each prompt and shell command, and everything stops when
 the connection ends. The hooks follow the thread and queue each handoff into it with
 `codex queue`, and Codex runs it after any turn in progress. You can also ask the

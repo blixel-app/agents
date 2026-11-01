@@ -222,7 +222,8 @@ echo '{"data":{"outcome":"connected","replaced":"c-1"}}' >"$dir/connect"
 tells "replaced" "$(reason "$(prompt "connect blixel")")" "no longer receives them"
 
 reset
-for words in "connect blixel please" '$blixel:connect please' '$blixel:connect ask direct' '$blixel:status now'; do
+for words in "connect blixel please" '$blixel:connect please' '$blixel:connect ask direct' '$blixel:status now' \
+	"disconnect blixel please" "disconnect blixel ask" "blixel status direct"; do
 	silent "words beside it go to the model: $words" "$(prompt "$words")"
 done
 never "words beside it go to the model" "$(cat "$log")" "blixel agent"
@@ -291,8 +292,15 @@ tells "status on shared" "$(reason "$(cat "$dir/told")")" "after you close this 
 reset
 tells "disconnected" "$(reason "$(prompt '$blixel:disconnect')")" "Disconnected"
 logged "agent disconnect pid=" || fail "disconnect: asked nothing"
+for words in "status blixel" "Blixel Status" "blixel:status"; do
+	tells "status by phrase: $words" "$(reason "$(prompt "$words")")" "Blixel"
+done
+for words in "disconnect blixel" "Disconnect Blixel" "blixel disconnect" "BLIXEL DISCONNECT" "blixel:disconnect"; do
+	tells "disconnect by phrase: $words" "$(reason "$(prompt "$words")")" "Disconnected"
+done
 echo '{"data":{"outcome":"not_connected"}}' >"$dir/disconnect"
 tells "had none" "$(reason "$(prompt '$blixel:disconnect')")" "not connected"
+tells "had none, by phrase" "$(reason "$(prompt "disconnect blixel")")" "not connected"
 echo '{"error":{"code":"app_unavailable","message":"Blixel is not running"}}' >"$dir/disconnect"
 tells "no app" "$(reason "$(prompt '$blixel:disconnect')")" "Blixel is not running"
 touch "$dir/old"
@@ -309,7 +317,7 @@ deliver_mark() { # the text; the submit's mark for it
 }
 
 reset
-for words in "connect blixel" "BLIXEL CONNECT" "blixel:connect ask" '$blixel:connect direct' '$blixel:status' '$blixel:disconnect'; do
+for words in "connect blixel" "BLIXEL CONNECT" "blixel:connect ask" '$blixel:connect direct' '$blixel:status' '$blixel:disconnect' "disconnect blixel"; do
 	: >"$log"
 	deliver_mark "$words" 1
 	told=$(prompt "$words")
