@@ -104,5 +104,15 @@ done
 
 /usr/bin/cmp -s "$root/skills/blixel/scripts/blixel" "$scripts/blixel" || fail "the two shims differ"
 
+# A copy, as the shim itself would find any Blixel installed on this Mac.
+/usr/bin/sed 's|/Applications/Blixel.app|/nowhere/Blixel.app|' "$scripts/blixel" >"$dir/shim"
+told=$(HOME=$dir PATH=/usr/bin:/bin BLIXEL_SHIM_NO_SEARCH=1 /bin/sh "$dir/shim" agent connect 2>&1)
+status=$?
+[ "$status" = 127 ] || fail "with no Blixel in an Applications folder: exit $status"
+case $told in
+*"Move it to one, or get it at https://blixel.app"*) ;;
+*) fail "with no Blixel in an Applications folder, says: $told" ;;
+esac
+
 [ "$failed" = 0 ] && echo "claude-routes: pass"
 exit "$failed"

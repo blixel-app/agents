@@ -21,12 +21,14 @@ for app in /Applications/Blixel.app "$HOME/Applications/Blixel.app"; do
 	cli="$app/Contents/Resources/bin/blixel"
 	[ -x "$cli" ] && exec "$cli" "$@"
 done
-if [ -z "${BLIXEL_SHIM_NO_SEARCH-}" ]; then
-	app=$(mdfind "kMDItemCFBundleIdentifier == 'app.blixel.Blixel'" 2>/dev/null | while read -r app; do
-		[ -x "$app/Contents/Resources/bin/blixel" ] && { echo "$app"; break; }
-	done)
-	[ -n "$app" ] && exec "$app/Contents/Resources/bin/blixel" "$@"
+if [ -n "${BLIXEL_SHIM_NO_SEARCH-}" ]; then
+	echo "Blixel isn't in /Applications or ~/Applications, the only places this looks. Move it to one, or get it at https://blixel.app" >&2
+	exit 127
 fi
+app=$(mdfind "kMDItemCFBundleIdentifier == 'app.blixel.Blixel'" 2>/dev/null | while read -r app; do
+	[ -x "$app/Contents/Resources/bin/blixel" ] && { echo "$app"; break; }
+done)
+[ -n "$app" ] && exec "$app/Contents/Resources/bin/blixel" "$@"
 
 echo "Blixel isn't installed. Get it at https://blixel.app" >&2
 exit 127
