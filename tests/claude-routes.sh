@@ -24,6 +24,7 @@ chmod +x "$dir/dev/blixel"
 # Every run names the stand-in, so no test here reaches an installed Blixel. A follower
 # from one would never exit.
 export BLIXEL_HOOK_PATH="$dir/dev:/usr/bin:/bin"
+export PATH=/usr/bin:/bin
 unset CLAUDE_PID
 
 planted() { # name of the route, then the command, with the plant first on PATH
@@ -32,11 +33,6 @@ planted() { # name of the route, then the command, with the plant first on PATH
 	PATH="$dir/plant:$PATH" "$@" >/dev/null 2>&1 </dev/null
 	[ ! -s "$dir/planted" ] || fail "$name ran the plant: $(cat "$dir/planted")"
 	: >"$dir/planted"
-}
-
-monitor() { # the manifest's command for monitor $1, as Claude Code expands it
-	/usr/bin/plutil -extract "experimental.monitors.$1.command" raw -o - "$manifest" |
-		/usr/bin/sed "s|\${CLAUDE_PLUGIN_ROOT}|$root|"
 }
 
 ran() { # what the stand-in was asked, once
@@ -53,10 +49,16 @@ CLAUDE_PID=$$ planted "the SessionStart hook" "$scripts/session-start.sh"
 [ "$(ran)" = "agent status" ] || fail "the SessionStart hook passed over the stand-in"
 planted "app-cli" "$scripts/app-cli" agent status
 [ "$(ran)" = "agent status" ] || fail "app-cli passed over the stand-in"
-for number in 0 1; do
-	planted "monitor $number" /bin/sh -c "$(monitor "$number")"
-	[ "$(ran)" = "agent follow" ] || fail "monitor $number passed over the stand-in"
-done
+
+# Every command in the manifest, as Claude Code expands it, so a new one is covered too.
+/usr/bin/sed -n 's/^ *"command": "\(.*\)",\{0,1\}$/\1/p' "$manifest" |
+	/usr/bin/sed "s/\\\\\"/\"/g; s|\${CLAUDE_PLUGIN_ROOT}|$root|" >"$dir/commands"
+[ "$(/usr/bin/wc -l <"$dir/commands")" -ge 4 ] || fail "read too few commands from the manifest"
+while read -r command; do
+	CLAUDE_PID=$$ planted "$command" /bin/sh -c "$command"
+	case $command in *agent\ follow) [ "$(ran)" = "agent follow" ] || fail "$command passed over the stand-in" ;; esac
+	rm -f "$dir/ran"
+done <"$dir/commands"
 
 # Without the setting, only system folders are searched.
 path=$(env -u BLIXEL_HOOK_PATH /bin/sh -c '. "$1/path.sh"; echo "$PATH"' sh "$scripts")
@@ -78,7 +80,7 @@ wait "$started" 2>/dev/null
 # run outside the sandbox: a model's dangerouslyDisableSandbox comes through it.
 cli=Blixel.app/Contents/Resources/bin/blixel
 for file in "$root"/skills/*/SKILL.md "$root"/commands/*.md; do
-	/usr/bin/sed -n 's/^allowed-tools: //p' "$file" | /usr/bin/grep -o 'Bash([^)]*)' | while read -r rule; do
+	/usr/bin/awk '/^---$/ { n++; next } n == 1' "$file" | /usr/bin/grep -oE 'Bash(\([^)]*\))?' | while read -r rule; do
 		case $rule in
 		"Bash(/Applications/$cli agent "* | "Bash(~/Applications/$cli agent "*) ;;
 		'Bash("${CLAUDE_PLUGIN_ROOT}/skills/connect-agent/scripts/connect.sh"*)') ;;
