@@ -9,6 +9,10 @@
   "keywords": [
     "pi-package"
   ],
+  "exports": {
+    "./server": "./opencode/server.ts",
+    "./tui": "./opencode/tui.ts"
+  },
   "pi": {
     "extensions": [
       "./pi/index.ts"
@@ -18,6 +22,15 @@
     ]
   },
   "peerDependencies": {
-    "@earendil-works/pi-coding-agent": "*"
+    "@earendil-works/pi-coding-agent": "*",
+    "@opencode/plugin": "*"
+  },
+  "peerDependenciesMeta": {
+    "@earendil-works/pi-coding-agent": {
+      "optional": true
+    },
+    "@opencode/plugin": {
+      "optional": true
+    }
   }
 }
