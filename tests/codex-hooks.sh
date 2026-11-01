@@ -628,6 +628,13 @@ for handler in UserPromptSubmit.0.hooks.1 PreToolUse.0.hooks.0; do
 	[ "$(plutil -extract "hooks.$handler.timeout" raw -o - "$hooks")" -gt 86400 ] || fail "$handler: relay dies"
 done
 [ "$(plutil -extract hooks.PreToolUse.0.matcher raw -o - "$hooks")" = '^Bash$' ] || fail "PreToolUse watches more than Bash"
+# Without one, Codex's Review hooks dialog lists a hook as "Hook 1".
+for handler in UserPromptSubmit.0.hooks.0 UserPromptSubmit.0.hooks.1 PreToolUse.0.hooks.0; do
+	case $(plutil -extract "hooks.$handler.statusMessage" raw -o - "$hooks" 2>/dev/null) in
+	Blixel:\ *) ;;
+	*) fail "$handler: Review hooks would show it with no name" ;;
+	esac
+done
 
 # Codex's trust covers its whole root, so that root holds a copy of what it shares
 # with Claude Code: `scripts/codex-skills.sh` writes it.

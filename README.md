@@ -1,12 +1,12 @@
 # Blixel skills
 
-Agent skills for [Blixel](https://blixel.app). They work with Claude Code, Codex
-and any other agent that reads `SKILL.md` skills.
+Agent skills for [Blixel](https://blixel.app). They work with Claude Code, Codex,
+pi and any other agent that reads `SKILL.md` skills.
 
 | Skill | What it does |
 | --- | --- |
 | [`blixel`](skills/blixel/SKILL.md) | Uses the `blixel` CLI to list rooms and who is in them, check the current meeting, read, follow and post to its chat, share windows into it, search, read, export or follow transcripts, and set up hooks that run a command when something happens. |
-| [`connect-agent`](skills/connect-agent/SKILL.md) | Connects a Claude Code or Codex session to your current Blixel meeting, so people in the call can hand it spoken requests. |
+| [`connect-agent`](skills/connect-agent/SKILL.md) | Connects a Claude Code, Codex or pi session to your current Blixel meeting, so people in the call can hand it spoken requests. |
 
 ## Requirements
 
@@ -34,6 +34,12 @@ codex plugin marketplace add blixel-app/skills
 codex plugin add blixel@blixel-app
 ```
 
+pi:
+
+```sh
+pi install git:github.com/blixel-app/skills
+```
+
 Any other agent that reads `SKILL.md` skills:
 
 ```sh
@@ -53,7 +59,7 @@ Or copy `skills/blixel` into the agent's skills folder.
 The agent asks before anything that others in the call will see: chat messages
 and window sharing.
 
-## Connecting Claude Code or Codex to a call
+## Connecting Claude Code, Codex or pi to a call
 
 Run `/blixel:connect` in the Claude Code session that should take requests while
 Blixel is in a meeting, or ask it to connect to Blixel. People in the call can then speak or type a request
@@ -109,6 +115,16 @@ disconnect before you close it. After `/new` or `/resume`, handoffs stay with th
 conversation that connected: `$blixel:status` says so, and connecting from the new
 one moves them.
 
+In pi, type `/blixel:connect`, with `ask` or `direct` after it, or `connect blixel`,
+`blixel connect` or `blixel:connect` as a prompt of its own; `/blixel:status` and
+`/blixel:disconnect`, or `blixel status` and `disconnect blixel`, check and disconnect.
+None of these calls a model. Asked in words, pi tells you to type the command. Nothing
+runs for Blixel in a session until you connect it, and everything stops when the
+connection ends. Each handoff arrives as a prompt, after any turn in progress, so Esc
+puts one still waiting back in your editor unrun. Quitting pi or starting a new session
+(`/new`, `/resume`, `/fork`) ends the connection. It needs Blixel 0.16 or later in
+`/Applications` or `~/Applications`.
+
 ## Releasing
 
 Each platform has its own manifests. Claude Code's plugin is this repository;
@@ -119,6 +135,7 @@ in its plugin's root changes, and a change to the mod must not do that:
 | --- | --- | --- |
 | Claude Code | `.claude-plugin/marketplace.json` | `.claude-plugin/plugin.json` |
 | Codex | `.agents/plugins/marketplace.json` | `codex/.codex-plugin/plugin.json` |
+| pi | None | `package.json` |
 
 Installs are cached by `version`, so raise each `plugin.json` whose plugin changed, or
 its users keep the old one. Leave Codex's alone unless something in `codex/` changed,
@@ -128,8 +145,8 @@ a skill's copy included: raising it makes Codex ask to trust the hooks again.
 and `claude plugin validate .` checks it the way Claude Code loads it.
 `tests/session-start.sh` tests the hook that runs after `/clear` or a compaction,
 `tests/connect.sh` the scripts behind `/blixel:connect`, `tests/claude-routes.sh` every
-Claude Code route against a planted PATH, and `tests/codex-hooks.sh` Codex's hooks in
-`codex/`. `codex/skills/` is a copy of `skills/`, as Codex drops symlinks when it installs a plugin: run `scripts/codex-skills.sh` after changing a
+Claude Code route against a planted PATH, `tests/codex-hooks.sh` Codex's hooks in
+`codex/`, and `tests/pi.sh` the pi package in `pi/`, in real pi. `codex/skills/` is a copy of `skills/`, as Codex drops symlinks when it installs a plugin: run `scripts/codex-skills.sh` after changing a
 skill, and the test fails if you don't. `codex/codex-skills/` holds what Codex alone
 lists, the skills behind `$blixel:connect` and the rest. Hooks run outside Codex's
 sandbox, so they ignore the session's PATH and take the CLI inside Blixel.app, and each
