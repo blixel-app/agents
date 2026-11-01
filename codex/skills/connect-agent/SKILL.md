@@ -1,7 +1,7 @@
 ---
 name: connect-agent
 user-invocable: false
-description: Connect this Claude Code, Codex or pi session to the user's current Blixel meeting, so people in the call can hand it spoken or typed requests ("Blixel handoffs"); also checks or ends that connection. Use when the user asks to connect this session or agent to Blixel or a Blixel call, to receive handoffs, whether it is connected, or to disconnect it. In Codex, when asked to connect, run `/Applications/Blixel.app/Contents/Resources/bin/blixel agent connect` at once with sandbox_permissions require_escalated and prefix_rule ["/Applications/Blixel.app/Contents/Resources/bin/blixel", "agent", "connect"], in the same step as reading this file. In pi, ask the user to type `/blixel:connect` and run nothing.
+description: Connect this session to the user's current Blixel meeting, so people in the call can hand it spoken or typed requests ("Blixel handoffs"); also checks or ends that connection. Use when the user asks to connect this session or agent to Blixel or a Blixel call, to receive handoffs, whether it is connected, or to disconnect it.
 allowed-tools: Read(/${CLAUDE_SKILL_DIR}/references/**) Bash(/Applications/Blixel.app/Contents/Resources/bin/blixel agent connect*) Bash(~/Applications/Blixel.app/Contents/Resources/bin/blixel agent connect*) Bash(/Applications/Blixel.app/Contents/Resources/bin/blixel agent status*) Bash(~/Applications/Blixel.app/Contents/Resources/bin/blixel agent status*) Bash(/Applications/Blixel.app/Contents/Resources/bin/blixel agent disconnect*) Bash(~/Applications/Blixel.app/Contents/Resources/bin/blixel agent disconnect*) Bash(/Applications/Blixel.app/Contents/Resources/bin/blixel agent follow) Bash(~/Applications/Blixel.app/Contents/Resources/bin/blixel agent follow)
 ---
 
@@ -12,8 +12,7 @@ that meeting can then speak or type a request to this session from Blixel.
 
 ## First
 
-To connect, run `blixel agent connect` now, with no flags and nothing before it. In
-pi, run nothing: ask the user to type `/blixel:connect`, and see `references/pi.md`.
+To connect, run `blixel agent connect` now, with no flags and nothing before it.
 
 `blixel` in these files always means
 `/Applications/Blixel.app/Contents/Resources/bin/blixel`, by that full path: a command run
@@ -23,17 +22,11 @@ the sandbox may have written. If that file doesn't exist, use
 the user this needs Blixel in an Applications folder, from https://blixel.app.
 `scripts/blixel` beside this file looks on PATH first: never run it.
 
-In Codex, always run connect with `sandbox_permissions: "require_escalated"`,
-`prefix_rule: ["/Applications/Blixel.app/Contents/Resources/bin/blixel", "agent", "connect"]`
-and the justification "Connect this thread to the Blixel app on this Mac", because
-Codex's sandbox blocks Blixel's local socket. From `~/Applications`, `prefix_rule` names
-that path instead.
-
-Read this agent's file only when connect fails, or for status, disconnect or a
-Monitor restart: `error.context.reference`, relative to this file. A failure without
-it comes from an older Blixel: use `references/claude-code.md` in Claude Code or
-`references/codex.md` in Codex. `not_in_agent_session`, or any other agent: tell the
-user connecting needs Claude Code, Codex or pi, and stop.
+`references/` holds a file for each agent. Read this one's only when connect fails, for
+status or disconnect, or when what receives its handoffs stops: a failure names it in
+`error.context.reference`, relative to this file. `not_in_agent_session`: a command
+can't connect this session. Tell the user to use the Blixel plugin's connect command
+if this agent has one, and stop.
 
 ## Blixel handoffs
 
@@ -59,10 +52,7 @@ or pause that task first.
 The first stderr line of `blixel agent connect` is a `request_id` event. On success stdout has one JSON line;
 tell the user this session is connected to the meeting and handoffs from people in
 it will arrive here. If `data.replaced` is set, another session was connected and
-no longer receives them: a meeting has one connected session. In Codex, also tell
-the user that unless this session was started with `--no-daemon`, it runs on Codex's
-shared app-server, so a handoff still runs in it after they close this terminal: ask
-this session to disconnect first.
+no longer receives them: a meeting has one connected session.
 
 On failure, stderr ends with `{"error":{"code",…}}`. This agent's file comes first;
 then, by `code`:

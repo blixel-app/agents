@@ -15,16 +15,16 @@ description: Work with Blixel meetings through the `blixel` CLI — sign in to a
 It never launches the app, joins a room or starts transcription. Those are the
 person's to do in the app; say so when a task needs them.
 
-To let people in the call hand spoken requests to this Claude Code or Codex
+To let people in the call hand spoken requests to this
 session, use the `connect-agent` skill (`blixel agent`).
 
 ## Before the first command
 
 1. If the shell can't find `blixel` (`command not found`), run
-   `${CLAUDE_SKILL_DIR}/scripts/blixel` (the `scripts/blixel` beside this file)
+   the `scripts/blixel` beside this file
    wherever this skill says `blixel` from then on: it runs the CLI inside the
    Blixel app. If that prints "Blixel isn't installed", tell the person to get it
-   at https://blixel.app. In Claude Code and Codex, a command that must run outside the
+   at https://blixel.app. A command that must run outside the
    sandbox names `/Applications/Blixel.app/Contents/Resources/bin/blixel` by that full path, or
    the same path under `~/Applications`, never a bare `blixel` or `scripts/blixel`:
    those look on PATH, which can hold a folder the sandbox writes.

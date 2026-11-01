@@ -649,10 +649,10 @@ done
 # A command Codex runs outside its sandbox and looks up on PATH runs what a folder
 # there holds, which the sandbox may have written: what the skills give it is a path.
 full=/Applications/Blixel.app/Contents/Resources/bin/blixel
-for file in skills/connect-agent/SKILL.md codex-skills/connect/SKILL.md; do
-	grep -q "$full agent connect" "$root/$file" || fail "$file: no full path to connect by"
+for file in skills/connect-agent/references/codex.md codex-skills/connect/SKILL.md; do
+	grep -qF "$full" "$root/$file" || fail "$file: no full path to connect by"
 done
-[ "$(grep -c "prefix_rule.*\"$full\"\|^\[\"$full\", \"agent\", \"connect\"\]" "$root/skills/connect-agent/SKILL.md")" = 2 ] ||
+grep -q "prefix_rule: \[\"$full\", \"agent\", \"connect\"\]" "$root/skills/connect-agent/references/codex.md" ||
 	fail "the rule a session saves is not on the full path"
 grep -rn 'prefix_rule[^[]*\["blixel"\|require_escalated.*`blixel \|run `blixel agent connect` at once' "$root/skills" "$root/codex-skills" >"$dir/bare" &&
 	fail "a bare blixel outside the sandbox: $(cat "$dir/bare")"

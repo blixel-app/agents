@@ -8,8 +8,11 @@ of asking.
 
 ## Running `blixel agent`
 
-Codex's sandbox blocks Blixel's local socket unless its network is on. Request
-escalated permissions for `blixel agent connect`, as the skill says. Do the same for
+Codex's sandbox blocks Blixel's local socket unless its network is on. Always run
+connect with `sandbox_permissions: "require_escalated"`, the justification "Connect
+this thread to the Blixel app on this Mac", and
+`prefix_rule: ["/Applications/Blixel.app/Contents/Resources/bin/blixel", "agent", "connect"]`,
+or that path under `~/Applications` if Blixel is there. Do the same for
 `blixel agent status` and `blixel agent disconnect` unless they already work where
 you are. Each runs by the skill's full path, never as a bare `blixel`.
 
@@ -18,6 +21,10 @@ you are. Each runs by the skill's full path, never as a bare `blixel`.
 `blixel agent connect` connects this Codex thread (`CODEX_THREAD_ID`). The plugin's
 hooks see that command and start following the thread as it runs; loading a skill
 starts nothing.
+
+Once connected, unless this session was started with `--no-daemon`, tell the user it
+runs on Codex's shared app-server, so a handoff still runs in it after they close this
+terminal: ask this session to disconnect first.
 
 On failure, by `code`:
 
