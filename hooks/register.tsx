@@ -10,12 +10,16 @@ type Failure = { code: string; message: string; hint?: string }
 type Answer = { data: Record<string, any>; error?: undefined; requestID?: undefined } | { error: Failure; requestID?: string }
 type Attachment = 'attached' | 'waiting' | 'refused' | 'stopped'
 type Session = {
+  ready: () => Promise<boolean>
   connect: (approval: string) => Promise<string>
   disconnect: () => Promise<string>
   status: () => Promise<string>
   deliver: () => Promise<void>
   refresh: () => Promise<Answer>
-  connecting: () => void
+  show: () => void
+  ownsHandoffs: () => boolean
+  connecting: () => Promise<(() => void) | undefined>
+  follow: () => Promise<void>
   forget: () => Promise<void>
 }
 
@@ -37,7 +41,16 @@ const EMPTY: Panel = {
 const panel = atom({ plugin: 'blixel', key: 'panel' } as const, EMPTY, { shape: 'panel-2' })
 const opened = atom({ plugin: 'blixel', key: 'opened' } as const, [])
 
+// Both of the plugin's monitors' description, and the Monitor the skill starts.
+const MONITOR = 'Blixel handoffs'
 const POLL_MS = 15_000
+// Polls a follower with no connection outlives: the skill it started for may
+// yet connect.
+const IDLE_POLLS = 4
+// How long loading the skill waits for the mod's follower to attach.
+const ATTACH_MS = 2_000
+// A /clear empties $.state just after session.end's hooks return.
+const CLEARED_MS = 1_000
 // After the user stops a turn, Claude Code drops the queued prompt and
 // refuses new ones until the user's next input.
 const STOPPED = ['the session was stopped and nobody has sent input since', 'was removed from the queue before it ran']
@@ -110,15 +123,13 @@ function describe(state: Panel) {
   }
 }
 
-/** The status line: the connection, else a meeting to connect to, then what waits. */
+/** The status line: the connection, then what waits. */
 function statusLine(state: Panel, connected: boolean, viaMonitor: boolean, waiting: number, stopped: boolean) {
   const parts: string[] = []
   if (connected) {
     const to = state.room ? `connected to ${state.room}` : 'connected'
     parts.push(viaMonitor ? `${to}, handoffs go to its monitor` : to)
     if (state.isReconnecting) parts.push('reconnecting')
-  } else if (state.room) {
-    parts.push(`in ${state.room}`, '/blixel:connect')
   }
   if (waiting > 0) parts.push(`${counted(waiting)} waiting${stopped ? ' for your next message' : ''}`)
   return parts.length > 0 ? `✦ ${parts.join(' · ')}` : undefined
@@ -133,25 +144,46 @@ export const register: Register = on => {
     // nobody to hand a prompt to and is left alone.
     if (!e.isInteractive && (await $.env.get('CLAUDE_CODE_ENTRYPOINT')) !== 'claude-desktop') return started
 
-    // CLAUDE_PID is not in a mod's process environment, and a nested session
-    // inherits its parent's: the mod's processes are children of this
-    // session's own `claude`, the process the app checks callers against.
-    const probe = await $.process.run(['/bin/sh', '-c', 'echo "$PPID"; ps -o lstart= -p "$PPID"']).catch(() => undefined)
-    const [pidText = '', startedAt = ''] = probe?.stdout.split('\n') ?? []
-    const pid = Number(pidText.trim())
-    if (probe?.exitCode !== 0 || !Number.isInteger(pid) || pid <= 1) return started
-    // With the start time, a later `claude` given the same pid has its own queue.
-    const key = `queue:${pid}:${startedAt.trim()}`
-    const cli = `${$.plugin.root}/bin/blixel`
+    // The mod's processes run outside the sandbox, so nothing they start may be found
+    // on the session's PATH.
+    const cli = `${$.plugin.root}/skills/connect-agent/scripts/app-cli`
 
-    let queue = queueFrom(await $.store.get(key).catch(() => undefined))
+    // Nothing runs in a session until Blixel is invoked in it.
+    let pid = 0
+    let key = ''
+    let queue: Queue = { next: 1, pending: [] }
+    // Handoffs numbered from here on may be from a connection made after a
+    // connect started or a refresh asked; those before it cannot be.
+    let since = queue.next
+    let identified: Promise<boolean> | undefined
+    const ready = () =>
+      (identified ??= (async () => {
+        // CLAUDE_PID is not in a mod's process environment, and a nested session
+        // inherits its parent's: the mod's processes are children of this
+        // session's own `claude`, the process the app checks callers against.
+        const probe = await $.process
+          .run(['/bin/sh', '-c', 'echo "$PPID"; exec /bin/ps -o lstart= -p "$PPID"'])
+          .catch(() => undefined)
+        const [pidText = '', startedAt = ''] = probe?.stdout.split('\n') ?? []
+        pid = Number(pidText.trim())
+        if (probe?.exitCode !== 0 || !Number.isInteger(pid) || pid <= 1) return false
+        // With the start time, a later `claude` given the same pid has its own queue.
+        key = `queue:${pid}:${startedAt.trim()}`
+        queue = queueFrom(await $.store.get(key).catch(() => undefined))
+        since = queue.next
+        return true
+      })())
+
+    let acks = true
+    let saving = 0
     let connected = false
     let attachment: Attachment = 'stopped'
     let delivering = false
     let stopped = false
     let disconnecting = false
     let sessionID = ''
-    let view: Panel = { ...(await read($, panel)), app: 'unknown' }
+    const before = await read($, panel)
+    let view: Panel = { ...before, app: 'unknown' }
 
     const env = async () => {
       sessionID = (await $.session.id().catch(() => '')) || sessionID
@@ -193,15 +225,16 @@ export const register: Register = on => {
       void update($, panel, () => view).catch(() => undefined)
     }
 
-    const save = () => $.store.set(key, queue).catch(() => undefined)
+    const save = () => $.store.set(key, queue).then(() => true, () => false)
 
     // One at a time, each a turn of its own. A prompt the session drops stays
-    // queued and is submitted again once the next turn completes.
+    // queued and is submitted again once the next turn completes. A handoff
+    // still being saved waits: it may yet be refused.
     const deliver = async () => {
       if (delivering) return
       delivering = true
       try {
-        for (let handoff = queue.pending[0]; handoff !== undefined; handoff = queue.pending[0]) {
+        for (let handoff = queue.pending[0]; handoff !== undefined && saving === 0; handoff = queue.pending[0]) {
           // Worded as the user set in Blixel, which decides whether it names
           // its sender: Claude Code adds no frame of its own.
           const submitted = await $.prompt.submit({ text: handoff.text, asUser: true })
@@ -225,37 +258,67 @@ export const register: Register = on => {
       }
     }
 
+    // `failed` promises it will not run, so it leaves the queue only once the
+    // app takes that answer: an older app has already told the sender queued.
+    const refuse = async (n: number, id: number) => {
+      const answer = await call(['agent', 'ack', String(id), 'failed', '--reason', 'the session could not save it'])
+      if (answer.error || answer.data.outcome !== 'recorded') return
+      queue = { ...queue, pending: queue.pending.filter(one => one.n !== n) }
+      view = { ...view, handoffs: view.handoffs.filter(one => one.n !== n) }
+    }
+
     // Saved before it is submitted: the follower has already told the app it
     // printed this one, so the queue is the only copy left.
     const receive = (line: string) => {
       const printed = jsonLines(line)[0]
-      if (typeof printed?.prompt !== 'string' || printed.prompt.trim() === '') return
-      const text: string = printed.prompt
+      // `message` keeps the line breaks; a handoff that fills a frame comes without it.
+      const text = [printed?.message, printed?.prompt].find(one => typeof one === 'string' && one.trim() !== '')
+      if (text === undefined) return
       const sender = typeof printed.sender_name === 'string' ? printed.sender_name : ''
       const handoff: PanelHandoff = { n: queue.next, text, sender, at: Date.now(), state: 'waiting' }
       queue = { next: queue.next + 1, pending: [...queue.pending, { n: handoff.n, text }] }
       view = { ...view, handoffs: [handoff, ...view.handoffs].slice(0, HISTORY) }
       show()
-      void save().then(deliver)
+      saving += 1
+      void save().then(async held => {
+        // Once, whatever it answers: after an app restart the same id can be
+        // another handoff, and an app too old for acks has answered already.
+        if (acks && Number.isInteger(printed.id)) {
+          if (held) void call(['agent', 'ack', String(printed.id), 'queued'])
+          else await refuse(handoff.n, printed.id)
+        }
+        saving -= 1
+        return deliver()
+      })
     }
 
     const notice = (line: string) => {
       const event = jsonLines(line)[0]
+      if (event?.error?.code === 'usage' && event.error.message?.includes('--acks')) acks = false
       if (event?.event !== 'follower' || typeof event.data?.state !== 'string') return
       attachment = event.data.state
+      settled()
       show()
     }
 
-    // The follower runs for the whole session, connected or not, so that a
-    // connect through the skill finds it attached too; a plugin monitor the
-    // skill starts then only waits behind it.
+    let poll: { cancel: () => void } | undefined
+    let retry: { cancel: () => void } | undefined
+    let child: ReturnType<typeof $.process.spawn> | undefined
+    let idle = 0
+    let settled = () => {}
+    let answering = Promise.resolve()
+
     const follow = (attempt: number) => {
       void (async () => {
         let out = ''
         let err = ''
+        let own: typeof child
+        const hadAcks = acks
         try {
-          const child = $.process.spawn({ argv: [cli, 'agent', 'follow', '--json'], env: await env() })
-          for await (const { stream, text } of child) {
+          const environment = await env()
+          if (!poll || child) return
+          own = child = $.process.spawn({ argv: [cli, 'agent', 'follow', '--json', ...(acks ? ['--acks'] : [])], env: environment })
+          for await (const { stream, text } of own) {
             if (stream === 'stdout') out = lines(out + text, receive)
             else err = lines(err + text, notice)
             if (attachment === 'attached') attempt = 0
@@ -263,9 +326,15 @@ export const register: Register = on => {
         } catch {
           // A follower that cannot start is retried like one that exited.
         }
+        settled()
+        // Stopped, and perhaps already replaced.
+        if (child !== own) return
+        child = undefined
         attachment = 'stopped'
         show()
-        $.clock.after(Math.min(60_000, 1_000 * 2 ** attempt), () => follow(attempt + 1))
+        if (!poll) return
+        // A connect is waiting for this follower: dropping --acks is no failure.
+        retry = $.clock.after(hadAcks && !acks ? 0 : Math.min(60_000, 1_000 * 2 ** attempt), () => follow(attempt + 1))
       })()
     }
 
@@ -274,13 +343,52 @@ export const register: Register = on => {
     let asked = 0
     let answered = 0
     let unanswered = 0
-    // Handoffs numbered from here on may be from a connection made after a
-    // connect started or a refresh asked; those before it cannot be.
-    let since = queue.next
-    const connecting = () => {
-      since = Math.max(since, queue.next)
+    let connects = 0
+
+    // Answers once this follower has said where it stands to the app, or ended.
+    const wake = () => {
+      idle = 0
+      if (poll) return answering
+      answering = new Promise<void>(resolve => {
+        settled = resolve
+      })
+      // A tick while an answer is still out would only start two more
+      // processes waiting behind it.
+      poll = $.clock.every(POLL_MS, async () => {
+        if (unanswered > 0) return
+        await refresh()
+        if (!connected && (idle += 1) >= IDLE_POLLS) rest()
+      })
+      // On a timer because a child takes the event that started it with it, and
+      // a prompt cannot be submitted from a hook: every handoff would fail.
+      retry = $.clock.after(0, () => follow(0))
+      return answering
     }
-    const refresh = async () => {
+
+    const rest = () => {
+      if (!poll || connects > 0) return
+      poll.cancel()
+      poll = undefined
+      retry?.cancel()
+      // Its stream's return is what kills the child.
+      void child?.return(undefined as never).catch(() => undefined)
+      child = undefined
+      attachment = 'stopped'
+      show()
+    }
+
+    const connecting = async () => {
+      if (!(await ready())) return undefined
+      since = Math.max(since, queue.next)
+      connects += 1
+      void wake()
+      return () => {
+        connects -= 1
+      }
+    }
+
+    const refresh = async (): Promise<Answer> => {
+      if (!(await ready())) return { error: { code: 'failed', message: 'This session has no claude process to name' } }
       const n = (asked += 1)
       const mark = queue.next
       unanswered += 1
@@ -291,9 +399,12 @@ export const register: Register = on => {
       if (answer.error) {
         if (answer.error.code === 'app_unavailable') {
           answered = n
+          // The app holds its connections in memory, so none survives it.
+          if (connected) $.ui.toast('Blixel closed, and this session is no longer connected.')
           connected = false
           view = { ...view, app: 'closed', isInMeeting: false, isReconnecting: false, room: null, approval: null }
           show()
+          rest()
         }
         return answer
       }
@@ -321,8 +432,12 @@ export const register: Register = on => {
         const reason = answer.data.session?.ended?.end_reason
         $.ui.toast(reason ? `Blixel disconnected this session (${reason}).` : 'Blixel disconnected this session.')
       }
+      const ended = connected && !now
       connected = now
       show()
+      if (ended) rest()
+      // A connection this mod did not make: a monitor's, or one from before a reload.
+      else if (now) void wake()
       return answer
     }
 
@@ -339,14 +454,21 @@ export const register: Register = on => {
     }
 
     session = {
+      ready,
+
       connect: async approval => {
         const args = ['agent', 'connect', ...(approval ? ['--approval', approval] : [])]
-        connecting()
+        // The app holds this connect until the follower it starts attaches.
+        const done = await connecting()
         let answer = await call(args)
         if (answer.error?.code === 'connect_outcome_unknown' && answer.requestID) {
           answer = await call([...args, '--request-id', answer.requestID])
         }
-        if (answer.error) return failure(answer.error)
+        done?.()
+        if (answer.error) {
+          if (!connected) rest()
+          return failure(answer.error)
+        }
         const wasConnected = connected
         await refresh()
         if (!wasConnected) await brief()
@@ -360,6 +482,7 @@ export const register: Register = on => {
           const answer = await call(['agent', 'disconnect'])
           if (answer.error) return failure(answer.error)
           await refresh()
+          rest()
           return answer.data.outcome === 'not_connected'
             ? 'This session was not connected to Blixel.'
             : 'Disconnected from the Blixel meeting. Handoffs no longer arrive here.'
@@ -397,26 +520,34 @@ export const register: Register = on => {
 
       deliver,
       refresh,
+      show,
+      ownsHandoffs: () => key !== '' && attachment !== 'refused',
       connecting,
-      forget: () => $.store.delete(key).catch(() => undefined),
+      follow: async () => {
+        if (await ready()) await wake()
+      },
+      forget: async () => {
+        if (key) await $.store.delete(key).catch(() => undefined)
+      },
     }
 
-    follow(0)
-    // For the whole session: the status line points at a meeting joined
-    // before this session connects. A tick while an answer is still out
-    // would only start two more processes waiting behind it.
-    $.clock.every(POLL_MS, () => {
-      if (unanswered === 0) void refresh()
-    })
-    void refresh()
-    void deliver()
+    // A reload ended the follower; $.state outlives it and says this session
+    // had one, or handoffs left to submit.
+    if (before.isConnected) {
+      void refresh().then(answer => {
+        // Unread is not ended: a poll settles it, and without a follower the
+        // connection would lapse first.
+        if (answer.error && answer.error.code !== 'app_unavailable') void session?.follow()
+      })
+    }
+    if (before.handoffs.some(one => one.state !== 'delivered')) void ready().then(() => deliver())
     return started
   })
 
   // Plain plugin commands, so every surface lists them; where the mod follows
-  // nothing, each runs as the prompt it holds, which hands it to the skill.
+  // nothing, each runs as the prompt it holds.
   on('command.run', { command: 'blixel:connect' }, async ($, e, next) => {
-    if (!session) return next(e)
+    if (!(await session?.ready()) || !session) return next(e)
     const approval = e.args.trim()
     if (approval !== '' && approval !== 'ask' && approval !== 'direct') {
       return { text: 'Usage: /blixel:connect [ask|direct]' }
@@ -427,11 +558,11 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'blixel:disconnect' }, async ($, e, next) =>
-    session ? { text: await session.disconnect() } : next(e),
+    session && (await session.ready()) ? { text: await session.disconnect() } : next(e),
   )
 
   on('command.run', { command: 'blixel:status' }, async ($, e, next) => {
-    if (!session) return next(e)
+    if (!(await session?.ready()) || !session) return next(e)
     const text = await session.status()
     await $.ui.open({ id: PANE, title: 'Blixel' })
     return { text }
@@ -443,12 +574,13 @@ export const register: Register = on => {
     const toggle = (n: number) => () =>
       update($, opened, list => (list.includes(n) ? list.filter(one => one !== n) : [...list, n]))
     const act = async () => {
-      if (!session) return
+      if (!(await session?.ready()) || !session) return
       const text = state.isConnected ? await session.disconnect() : await session.connect('')
       if (!/^(Connected|Disconnected)/.test(text)) $.ui.toast(text)
     }
     const { headline, detail } = describe(state)
-    const action = state.app !== 'closed' && state.isInMeeting ? (state.isConnected ? 'Disconnect' : 'Connect') : null
+    // Nothing reads the app before a connect, so what it says here can be old.
+    const action = state.isConnected ? 'Disconnect' : 'Connect'
 
     if (e.surface === 'desktop') {
       const { Box, Button, Svg, Text } = $.ui.resolve(e)
@@ -464,14 +596,12 @@ export const register: Register = on => {
                 {detail}
               </Text>
             </Box>
-            {action && (
-              <Button
-                key="connection"
-                label={action}
-                variant={state.isConnected ? 'secondary' : 'primary'}
-                onPress={act}
-              />
-            )}
+            <Button
+              key="connection"
+              label={action}
+              variant={state.isConnected ? 'secondary' : 'primary'}
+              onPress={act}
+            />
           </Box>
           <Box flexDirection="column" gap={1}>
             <Text size="caption" weight="semibold" dimColor>
@@ -529,7 +659,7 @@ export const register: Register = on => {
               <Text color={ACCENT}>✦ </Text>
               {headline}
             </Text>
-            {action && <Button key="connection" label={action} onPress={act} />}
+            <Button key="connection" label={action} onPress={act} />
           </Box>
           <Text dimColor>{detail}</Text>
         </Box>
@@ -581,18 +711,55 @@ export const register: Register = on => {
     return completed
   })
 
+  // Loading the skill arms the plugin's monitor, and the first follower to
+  // attach keeps a session's handoffs: the mod's has to get there before it.
+  on('tool.call', { tool: 'Skill' }, async ($, e, next) => {
+    if (session && /^(blixel:)?connect-agent$/.test(e.skill)) {
+      const attached = session.follow()
+      await Promise.race([attached, $.clock.sleep(ATTACH_MS)])
+    }
+    return next(e)
+  })
+
   // The connect-agent skill connects and disconnects through Bash.
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
-    const command = /\bblixel\b.*\bagent\s+(connect|disconnect)\b/.exec(e.command)?.[1]
-    if (command === 'connect') session?.connecting()
-    const ran = await next(e)
-    if (command) void session?.refresh()
-    return ran
+    // A command that only quotes it, as a grep or a commit message does, is no invocation.
+    const command = /(?:^|[\s;&|(/])blixel["']?\s+agent\s+(connect|disconnect)\b/.exec(e.command)?.[1]
+    const connected = command === 'connect' ? await session?.connecting() : undefined
+    try {
+      const ran = await next(e)
+      if (command) void session?.refresh()
+      return ran
+    } finally {
+      connected?.()
+    }
+  })
+
+  // A monitor the skill armed only waits behind the mod's follower, and once
+  // that stops it would attach and take the next connection's handoffs.
+  on('classic.Stop', async ($, e, next) => {
+    const stopped = await next(e)
+    if (session?.ownsHandoffs()) {
+      for (const task of e.background_tasks ?? []) {
+        // Claude Code reports a plugin monitor as a shell task.
+        if (task.description !== MONITOR || !task.command?.includes('agent follow')) continue
+        // A call under an `ask` rule would stop the end of the turn on a dialog
+        // about a task the user never heard of.
+        const verdict = await $.tool.check({ tool: 'TaskStop', input: { task_id: task.id } }).catch(() => undefined)
+        if (verdict?.decision !== 'allow') continue
+        await $.tool.call({ tool: 'TaskStop', task_id: task.id }).catch(() => undefined)
+      }
+    }
+    return stopped
   })
 
   // `clear` and `resume` go on in the same process, with the same queue.
   on('session.end', async ($, e, next) => {
-    if (e.reason !== 'clear' && e.reason !== 'resume') await session?.forget()
-    return next(e)
+    const goesOn = e.reason === 'clear' || e.reason === 'resume'
+    if (!goesOn) await session?.forget()
+    const ended = await next(e)
+    // A reload learns from $.state that this session is connected.
+    if (goesOn) $.clock.after(CLEARED_MS, () => session?.show())
+    return ended
   })
 }

@@ -73,43 +73,89 @@ so a handoff waits for that, and the status line says so. `/blixel:connect
 disconnect without asking Claude, and the Blixel pane, which `/blixel:status`
 opens (and, in the desktop app, connecting), shows the meeting and the handoffs
 it sent this session, each with who sent it. The status line names the meeting
-too, and points to `/blixel:connect` while Blixel is in one this session is not
-connected to. Without mods, those commands ask Claude to use the skill, and
-the plugin's monitor delivers the handoffs. Where plugin monitors don't run
+too. Nothing runs for Blixel in a session until you connect it, or ask it to, and
+everything stops when the connection ends; `/blixel:status` reads once. Claude Code
+binds a connection to its process, so a session resumed with `claude --resume`
+connects again. Without mods, `/blixel:connect` connects before Claude answers, the other two
+commands ask Claude to use the skill, and the plugin's monitor delivers the handoffs. Where plugin monitors don't run
 either, as in the Claude desktop app, the skill starts a Monitor for them and
 starts it again each time Claude Code stops it after 30 minutes. Without the mod,
-the session needs Claude Code monitors: they don't run when `DISABLE_TELEMETRY` or
-`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is set, or on Amazon Bedrock, Google
-Cloud's Agent Platform or Microsoft Foundry. If handoffs stop arriving, run
+the session needs Claude Code monitors: before Claude Code 2.1.310 they don't run
+when `DISABLE_TELEMETRY` or `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is set, or on
+Amazon Bedrock, Google Cloud's Agent Platform or Microsoft Foundry. If handoffs stop arriving, run
 `/blixel:connect` again. With Claude Code's Bash sandbox on, add the socket
 path that `blixel agent connect` reports to `sandbox.network.allowUnixSockets`.
+Connecting needs Blixel in `/Applications` or `~/Applications`.
 
 Installed as a skill only (`npx skills add`), connecting still works, but after `/clear` or a compaction ask the session to connect to Blixel again, or it will not act on the handoffs it keeps receiving.
 
-In Codex, ask the session to connect to the Blixel call. Blixel queues each
-handoff into that thread with `codex queue`, and Codex runs it after any turn in
-progress. Codex's sandbox blocks Blixel's local socket, so approve running
-`blixel agent` outside the sandbox when Codex asks; if it can't ask, run
-`/permissions` and choose Approve for me. A plain `codex` session runs on Codex's
-shared app-server, where a handoff still runs after you close its terminal, so ask
-the session to disconnect before you close it.
+In Codex, trust the plugin's hooks when Codex asks at start, or later in `/hooks`,
+and again after an update that changes them: without them no handoff arrives. Then
+pick `$blixel:connect` (type `$con`, then Enter twice), with `ask` or `direct` after
+it to choose whether Blixel asks you before each handoff. Typing `connect blixel`,
+`blixel connect` or `blixel:connect` as a prompt of its own does the same, and
+`$blixel:status` and `$blixel:disconnect` check and disconnect. None of these calls a
+model. Nothing runs for Blixel in a session until you connect it or ask it to, beyond
+a filter of about 6 ms on each prompt and shell command, and everything stops when
+the connection ends. The hooks follow the thread and queue each handoff into it with
+`codex queue`, and Codex runs it after any turn in progress. You can also ask the
+session to connect to the Blixel call; Codex's sandbox blocks Blixel's local socket,
+so approve running the CLI inside Blixel.app outside the sandbox when Codex asks; if
+it can't ask, run `/permissions` and choose Approve for me. If you take over 2 minutes
+to approve, connect again. Codex needs Blixel in `/Applications` or `~/Applications`. A plain `codex` session runs on Codex's shared app-server,
+where a handoff still runs after you close its terminal, so ask the session to
+disconnect before you close it. After `/new` or `/resume`, handoffs stay with the
+conversation that connected: `$blixel:status` says so, and connecting from the new
+one moves them.
 
 ## Releasing
 
-Each platform has its own manifests, and both point at the same `skills/`:
+Each platform has its own manifests. Claude Code's plugin is this repository;
+Codex's is `codex/`, because Codex asks its users to trust hooks again when anything
+in its plugin's root changes, and a change to the mod must not do that:
 
 | | Marketplace | Plugin |
 | --- | --- | --- |
 | Claude Code | `.claude-plugin/marketplace.json` | `.claude-plugin/plugin.json` |
-| Codex | `.agents/plugins/marketplace.json` | `.codex-plugin/plugin.json` |
+| Codex | `.agents/plugins/marketplace.json` | `codex/.codex-plugin/plugin.json` |
 
-Installs are cached by `version`, so raise it in both `plugin.json` files
-together, or users of one platform keep the old skill.
+Installs are cached by `version`, so raise each `plugin.json` whose plugin changed, or
+its users keep the old one. Leave Codex's alone unless something in `codex/` changed,
+a skill's copy included: raising it makes Codex ask to trust the hooks again.
 
 `hooks/register.tsx` is the mod; `claude plugin test .` runs its tests in `tests/`,
 and `claude plugin validate .` checks it the way Claude Code loads it.
+`tests/session-start.sh` tests the hook that runs after `/clear` or a compaction,
+`tests/connect.sh` the scripts behind `/blixel:connect`, `tests/claude-routes.sh` every
+Claude Code route against a planted PATH, and `tests/codex-hooks.sh` Codex's hooks in
+`codex/`. `codex/skills/` is a copy of `skills/`, as Codex drops symlinks when it installs a plugin: run `scripts/codex-skills.sh` after changing a
+skill, and the test fails if you don't. `codex/codex-skills/` holds what Codex alone
+lists, the skills behind `$blixel:connect` and the rest. Hooks run outside Codex's
+sandbox, so they ignore the session's PATH and take the CLI inside Blixel.app, and each
+filter in `codex/hooks.json` names its commands by full path; `BLIXEL_HOOK_PATH`, set
+where Codex starts, replaces their PATH to test a development build. The same goes for
+what the skills have Codex run outside its sandbox: an approved bare `blixel` runs
+whatever PATH holds, so they name the CLI by full path, and a development build's has
+to be named to the session.
+
+Claude Code runs its hooks, the plugin's monitor and the mod outside its sandbox too.
+They source `skills/connect-agent/scripts/path.sh` or go through `app-cli` beside it,
+which ignore the session's PATH and take the CLI inside Blixel.app, in `/Applications`
+or `~/Applications`. To test a development build, start Claude Code with
+`BLIXEL_HOOK_PATH=<folder holding its blixel>:/usr/bin:/bin:/usr/sbin:/sbin`: that
+covers `/blixel:connect`, the monitor and the mod. The skill and its `allowed-tools`
+name the CLI by full path, so a development build's has to be named to the session
+there, and it asks before it runs. `tests/claude-routes.sh` fails if a route goes back
+to a bare `blixel`.
+
+`skills/connect-agent/SKILL.md` holds what every agent shares; each agent's part is
+in `references/`, the file a failed `blixel agent connect` names.
+
+Connecting takes at most one model step before `blixel agent connect`. Each release
+compares real connect times with the last one.
 
 `skills/blixel/scripts/blixel` and `skills/connect-agent/scripts/blixel` are the
 same script, so each skill works installed on its own; change them together.
 `bin/blixel` links to the first, putting `blixel` on the Claude Code Bash tool's
-`PATH`.
+`PATH`, for commands the model runs in the sandbox. Both look on `PATH` first, so
+nothing outside a sandbox reaches them with the session's.

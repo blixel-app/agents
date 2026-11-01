@@ -1,6 +1,6 @@
 {
   "name": "blixel",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Rooms, meeting chat, window sharing, transcripts, hooks and agent handoffs through the blixel CLI.",
   "author": {
     "name": "Blixel",
@@ -20,13 +20,30 @@
     "monitors": [
       {
         "name": "handoffs",
-        "command": "\"${CLAUDE_PLUGIN_ROOT}\"/bin/blixel agent follow",
+        "command": "\"${CLAUDE_PLUGIN_ROOT}\"/skills/connect-agent/scripts/app-cli agent follow",
         "description": "Blixel handoffs",
         "when": "on-skill-invoke:blixel:connect-agent"
+      },
+      {
+        "name": "handoffs-connect",
+        "command": "\"${CLAUDE_PLUGIN_ROOT}\"/skills/connect-agent/scripts/app-cli agent follow",
+        "description": "Blixel handoffs",
+        "when": "on-skill-invoke:blixel:connect"
       }
     ]
   },
   "hooks": {
+    "UserPromptExpansion": [
+      {
+        "matcher": "blixel:connect",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"${CLAUDE_PLUGIN_ROOT}/skills/connect-agent/scripts/connect-arguments.sh\""
+          }
+        ]
+      }
+    ],
     "SessionStart": [
       {
         "matcher": "clear|compact",
