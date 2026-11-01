@@ -25,7 +25,8 @@ the user this needs Blixel in an Applications folder, from https://blixel.app.
 In Codex, always run connect with `sandbox_permissions: "require_escalated"`,
 `prefix_rule: ["/Applications/Blixel.app/Contents/Resources/bin/blixel", "agent", "connect"]`
 and the justification "Connect this thread to the Blixel app on this Mac", because
-Codex's sandbox blocks Blixel's local socket.
+Codex's sandbox blocks Blixel's local socket. From `~/Applications`, `prefix_rule` names
+that path instead.
 
 Read this agent's file only when connect fails, or for status, disconnect or a
 Monitor restart: `error.context.reference`, relative to this file. A failure without
