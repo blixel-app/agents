@@ -358,3 +358,96 @@ test('a reload keeps the listed handoffs while the session stays in their meetin
   expect(await ui.find({ type: 'Text', text: /Rename the flag/ })).toBeDefined()
   await ui.unmount()
 })
+
+const typed = ($: Parameters<typeof start>[0], text: string, kind = 'composer') =>
+  $.prompt.submit({ text, origin: { kind } } as never)
+
+test('typed phrases connect, check and disconnect with no turn', async ($, on) => {
+  const cli = connectedCli()
+  const stub = stage(on, { cli: command => cli.answer(command) })
+  await start($)
+
+  expect(await typed($, 'Connect Blixel')).toEqual({ drop: expect.stringContaining('Connected to the Blixel') })
+  await stub.settle()
+  expect(await typed($, 'blixel status')).toEqual({ drop: expect.stringContaining('connected to the Blixel') })
+  expect(await typed($, 'blixel:disconnect')).toEqual({ drop: expect.stringContaining('Disconnected from the') })
+
+  expect(stub.panes).toEqual(['blixel'])
+  expect(cli.calls).toContain('disconnect')
+  expect(stub.submitted).toEqual([])
+})
+
+test('a typed phrase leaves the prompt box empty', async ($, on) => {
+  const cli = connectedCli()
+  const stub = stage(on, { cli: command => cli.answer(command) })
+  const filled: string[] = []
+  on('prompt.fill', ($, e) => {
+    filled.push(e.text)
+    return { isFilled: true }
+  })
+  on('prompt.read', () => ({ value: { text: 'connect blixel', cursor: 14 } }))
+  await start($)
+
+  await typed($, 'connect blixel')
+  await stub.settle()
+
+  await stub.clock.advance(100)
+  await stub.settle()
+  expect(filled).toEqual([''])
+})
+
+test('text typed while a phrase ran stays in the prompt box', async ($, on) => {
+  const cli = connectedCli()
+  const stub = stage(on, { cli: command => cli.answer(command) })
+  const filled: string[] = []
+  on('prompt.fill', ($, e) => {
+    filled.push(e.text)
+    return { isFilled: true }
+  })
+  on('prompt.read', () => ({ value: { text: 'connect blixelnext thought', cursor: 26 } }))
+  await start($)
+
+  await typed($, 'connect blixel')
+  await stub.settle()
+
+  await stub.clock.advance(100)
+  await stub.settle()
+  expect(filled).toEqual([])
+})
+
+test('a typed connect takes ask or direct', async ($, on) => {
+  const cli = connectedCli()
+  const stub = stage(on, { cli: command => cli.answer(command) })
+  await start($)
+
+  await typed($, 'blixel connect direct')
+  await stub.settle()
+
+  const connects = stub.runs.filter(one => one.argv.includes('connect'))
+  expect(connects.map(one => one.argv.slice(-2))).toContainEqual(['--approval', 'direct'])
+  expect(stub.submitted).toEqual([])
+})
+
+test('a phrase inside a longer prompt reaches the model', async ($, on) => {
+  const cli = connectedCli()
+  const stub = stage(on, { cli: command => cli.answer(command) })
+  await start($)
+
+  for (const text of ['connect blixel please', 'please connect blixel', 'disconnect blixel ask', 'blixel status direct']) {
+    await typed($, text)
+  }
+
+  expect(stub.submitted).toHaveLength(4)
+  expect(cli.calls).not.toContain('connect')
+})
+
+test('a handoff saying a phrase runs nothing', async ($, on) => {
+  const cli = connectedCli()
+  const stub = stage(on, { cli: command => cli.answer(command) })
+  await connectSession($, stub)
+
+  await typed($, 'disconnect blixel', 'plugin')
+
+  expect(stub.submitted).toEqual(['disconnect blixel'])
+  expect(cli.calls).not.toContain('disconnect')
+})

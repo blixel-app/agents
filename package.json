@@ -1,0 +1,23 @@
+{
+  "name": "blixel",
+  "version": "0.8.0",
+  "private": true,
+  "description": "Rooms, meeting chat, window sharing, transcripts, hooks and agent handoffs through the blixel CLI.",
+  "homepage": "https://blixel.app",
+  "repository": "https://github.com/blixel-app/skills",
+  "license": "MIT",
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "extensions": [
+      "./pi/index.ts"
+    ],
+    "skills": [
+      "./skills"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*"
+  }
+}

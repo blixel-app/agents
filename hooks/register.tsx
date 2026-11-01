@@ -1,5 +1,5 @@
 import { atom, read, update } from 'claude-code'
-import type { Register } from 'claude-code'
+import type { EngineInterface, Register } from 'claude-code'
 
 import type { Panel, PanelHandoff } from '../types'
 import { clock, excerpt, LOGO, wrap } from './panel'
@@ -24,6 +24,8 @@ type Session = {
 }
 
 const PANE = 'blixel'
+// The prompts that act with no model, the same as Codex's hooks read them.
+const PHRASE = /^(?:blixel[ :](connect|disconnect|status)|(connect|disconnect|status) blixel)(?: (ask|direct))?$/
 const HISTORY = 20
 const EMPTY: Panel = {
   app: 'unknown',
@@ -54,6 +56,18 @@ const CLEARED_MS = 1_000
 // After the user stops a turn, Claude Code drops the queued prompt and
 // refuses new ones until the user's next input.
 const STOPPED = ['the session was stopped and nobody has sent input since', 'was removed from the queue before it ran']
+
+async function connect($: EngineInterface, session: Session, approval: string) {
+  const text = await session.connect(approval)
+  if ((await $.session.surfaces()).includes('desktop')) await $.ui.open({ id: PANE, title: 'Blixel' })
+  return text
+}
+
+async function status($: EngineInterface, session: Session) {
+  const text = await session.status()
+  await $.ui.open({ id: PANE, title: 'Blixel' })
+  return text
+}
 
 function failure(error: Failure) {
   switch (error.code) {
@@ -544,6 +558,27 @@ export const register: Register = on => {
     return started
   })
 
+  // Only what the person typed: someone in the call saying a phrase must not run it.
+  on('prompt.submit', async ($, e, next) => {
+    const typed = e.origin.kind === 'composer' || e.origin.kind === 'bridge'
+    const said = typed && !e.command ? PHRASE.exec(e.text.trim().toLowerCase()) : null
+    const verb = said?.[1] ?? said?.[2]
+    if (!said || !verb || (said[3] && verb !== 'connect')) return next(e)
+    if (!(await session?.ready()) || !session) return next(e)
+    const answers = {
+      connect: () => connect($, session, said[3] ?? ''),
+      disconnect: session.disconnect,
+      status: () => status($, session),
+    }
+    const text = await answers[verb as keyof typeof answers]()
+    // The only way not to enter: Claude Code prefixes the answer with "Prompt dropped
+    // by a hook:" and puts the text back in the box. `$.command.run` is refused here.
+    $.clock.after(50, async () => {
+      if ((await $.prompt.read()).text === e.text) await $.prompt.fill({ text: '', mode: 'replace' })
+    })
+    return { drop: text }
+  })
+
   // Plain plugin commands, so every surface lists them; where the mod follows
   // nothing, each runs as the prompt it holds.
   on('command.run', { command: 'blixel:connect' }, async ($, e, next) => {
@@ -552,9 +587,7 @@ export const register: Register = on => {
     if (approval !== '' && approval !== 'ask' && approval !== 'direct') {
       return { text: 'Usage: /blixel:connect [ask|direct]' }
     }
-    const text = await session.connect(approval)
-    if ((await $.session.surfaces()).includes('desktop')) await $.ui.open({ id: PANE, title: 'Blixel' })
-    return { text }
+    return { text: await connect($, session, approval) }
   })
 
   on('command.run', { command: 'blixel:disconnect' }, async ($, e, next) =>
@@ -563,9 +596,7 @@ export const register: Register = on => {
 
   on('command.run', { command: 'blixel:status' }, async ($, e, next) => {
     if (!(await session?.ready()) || !session) return next(e)
-    const text = await session.status()
-    await $.ui.open({ id: PANE, title: 'Blixel' })
-    return { text }
+    return { text: await status($, session) }
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {

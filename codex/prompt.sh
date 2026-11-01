@@ -21,8 +21,8 @@ words=$(printf '%s' "$prompt" | tr '[:upper:]' '[:lower:]')
 verb=
 approval=
 case $words in
-'$blixel:status') verb=status ;;
-'$blixel:disconnect') verb=disconnect ;;
+'$blixel:status' | 'status blixel' | 'blixel status' | 'blixel:status') verb=status ;;
+'$blixel:disconnect' | 'disconnect blixel' | 'blixel disconnect' | 'blixel:disconnect') verb=disconnect ;;
 *' ask') approval=ask words=${words% ask} ;;
 *' direct') approval=direct words=${words% direct} ;;
 esac
