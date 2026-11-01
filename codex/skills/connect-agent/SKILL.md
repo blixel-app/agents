@@ -1,7 +1,7 @@
 ---
 name: connect-agent
 user-invocable: false
-description: Connect this Claude Code or Codex session to the user's current Blixel meeting, so people in the call can hand it spoken or typed requests ("Blixel handoffs"); also checks or ends that connection. Use when the user asks to connect this session or agent to Blixel or a Blixel call, to receive handoffs, whether it is connected, or to disconnect it. In Codex, when asked to connect, run `/Applications/Blixel.app/Contents/Resources/bin/blixel agent connect` at once with sandbox_permissions require_escalated and prefix_rule ["/Applications/Blixel.app/Contents/Resources/bin/blixel", "agent", "connect"], in the same step as reading this file.
+description: Connect this Claude Code, Codex or pi session to the user's current Blixel meeting, so people in the call can hand it spoken or typed requests ("Blixel handoffs"); also checks or ends that connection. Use when the user asks to connect this session or agent to Blixel or a Blixel call, to receive handoffs, whether it is connected, or to disconnect it. In Codex, when asked to connect, run `/Applications/Blixel.app/Contents/Resources/bin/blixel agent connect` at once with sandbox_permissions require_escalated and prefix_rule ["/Applications/Blixel.app/Contents/Resources/bin/blixel", "agent", "connect"], in the same step as reading this file. In pi, ask the user to type `/blixel:connect` and run nothing.
 allowed-tools: Read(/${CLAUDE_SKILL_DIR}/references/**) Bash(/Applications/Blixel.app/Contents/Resources/bin/blixel agent connect*) Bash(~/Applications/Blixel.app/Contents/Resources/bin/blixel agent connect*) Bash(/Applications/Blixel.app/Contents/Resources/bin/blixel agent status*) Bash(~/Applications/Blixel.app/Contents/Resources/bin/blixel agent status*) Bash(/Applications/Blixel.app/Contents/Resources/bin/blixel agent disconnect*) Bash(~/Applications/Blixel.app/Contents/Resources/bin/blixel agent disconnect*) Bash(/Applications/Blixel.app/Contents/Resources/bin/blixel agent follow) Bash(~/Applications/Blixel.app/Contents/Resources/bin/blixel agent follow)
 ---
 
@@ -12,7 +12,8 @@ that meeting can then speak or type a request to this session from Blixel.
 
 ## First
 
-To connect, run `blixel agent connect` now, with no flags and nothing before it.
+To connect, run `blixel agent connect` now, with no flags and nothing before it. In
+pi, run nothing: ask the user to type `/blixel:connect`, and see `references/pi.md`.
 
 `blixel` in these files always means
 `/Applications/Blixel.app/Contents/Resources/bin/blixel`, by that full path: a command run
@@ -32,7 +33,7 @@ Read this agent's file only when connect fails, or for status, disconnect or a
 Monitor restart: `error.context.reference`, relative to this file. A failure without
 it comes from an older Blixel: use `references/claude-code.md` in Claude Code or
 `references/codex.md` in Codex. `not_in_agent_session`, or any other agent: tell the
-user connecting needs Claude Code or Codex, and stop.
+user connecting needs Claude Code, Codex or pi, and stop.
 
 ## Blixel handoffs
 
