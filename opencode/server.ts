@@ -1,4 +1,5 @@
 import { execFile, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import type { ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
 import * as net from "node:net";
@@ -56,8 +57,8 @@ export default Plugin.define({
 	id: "blixel",
 	async setup(ctx) {
 		const guidance = rules();
-		// A shell's create.before names no session, so the tool call before it does.
-		const commands = new Map<string, string>();
+		// Shell hooks have no session ID; a unique command bridges each tool invocation.
+		const commands = new Map<string, { session: string; command: string }>();
 
 		// The server's pid, as it holds the session and a terminal only attaches to it.
 		const environment = (session: string) => ({
@@ -195,19 +196,30 @@ export default Plugin.define({
 			}
 		});
 
-		await ctx.tool.hook("execute.before", async (event) => {
-			const command = String((event.input as { command?: unknown })?.command ?? "");
-			const verb = RUNS.exec(command)?.[1];
-			if (!verb) return;
-			commands.set(command, event.sessionID);
-			if (verb === "connect" && !relays.has(event.sessionID)) start(event.sessionID);
+		await ctx.tool.transform((editor) => {
+			editor.update("shell", (tool) => {
+				const execute = tool.execute;
+				tool.execute = async (input, context) => {
+					const command = String(input.command ?? "");
+					const verb = RUNS.exec(command)?.[1];
+					if (!verb) return execute(input, context);
+					const key = `# blixel ${randomUUID()}\n${command}`;
+					commands.set(key, { session: context.sessionID, command });
+					try {
+						if (verb === "connect" && !relays.has(context.sessionID)) start(context.sessionID);
+						return await execute({ ...input, command: key }, context);
+					} finally {
+						commands.delete(key);
+					}
+				};
+			});
 		});
 
 		await ctx.shell.hook("create.before", async (event) => {
-			const session = commands.get(event.command);
-			if (!session) return;
-			commands.delete(event.command);
-			Object.assign(event.env, environment(session));
+			const pending = commands.get(event.command);
+			if (!pending) return;
+			event.command = pending.command;
+			Object.assign(event.env, environment(pending.session));
 		});
 
 		// A connect with no model never reads the skill, and this outlasts a compaction.

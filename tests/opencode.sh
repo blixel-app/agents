@@ -97,6 +97,11 @@ server.unref();
 export default {
 	id: "listen",
 	async setup(ctx: any) {
+		await ctx.tool.hook("execute.before", async (event: any) => {
+			if (!fs.existsSync("$dir/delay-session") || event.sessionID !== fs.readFileSync("$dir/delay-session", "utf8")) return;
+			fs.writeFileSync("$dir/delayed", "yes");
+			while (fs.existsSync("$dir/delay")) await new Promise((wake) => setTimeout(wake, 20));
+		});
 		await ctx.session.hook("prompt", async () => {
 			if (fs.existsSync("$dir/slow-prompt")) await new Promise((wake) => setTimeout(wake, 500));
 		});
@@ -364,6 +369,22 @@ model_runs "$five" "\"$dir/bin/blixel\" agent disconnect"
 logged "agent disconnect pid=$pid key=$five" || fail "the model's disconnect: wrong session: $(cat "$log")"
 : >"$dir/end-relay"
 waits_for gone "$five" || fail "the relay outlived the model's disconnect"
+
+# Identical shell commands in overlapping sessions retain their own identity.
+
+other=$(new_session)
+printf '%s' "$five" >"$dir/delay-session"
+: >"$dir/delay"
+: >"$log"
+printf '"%s/bin/blixel" agent status' "$dir" >"$dir/model-runs"
+prompt "$five" "check first"
+waits_for test -e "$dir/delayed" || fail "the first shell did not wait"
+printf '"%s/bin/blixel" agent status' "$dir" >"$dir/model-runs"
+prompt "$other" "check second"
+waits_for logged "agent status pid=$pid key=$other" || fail "the second status lost its session"
+rm "$dir/delay"
+waits_for logged "agent status pid=$pid key=$five" || fail "the first status lost its session"
+rm "$dir/delay-session" "$dir/delayed"
 
 # Phrases in the terminal, whole and in any case, on a screen with no session yet
 
