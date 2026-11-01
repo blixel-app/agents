@@ -97,8 +97,9 @@ server.unref();
 export default {
 	id: "listen",
 	async setup(ctx: any) {
-		await ctx.tool.hook("execute.before", async (event: any) => {
-			if (!fs.existsSync("$dir/delay-session") || event.sessionID !== fs.readFileSync("$dir/delay-session", "utf8")) return;
+		// Holds the first shell to start, between the tool call and the shell it makes.
+		await ctx.shell.hook("create.before", async () => {
+			if (!fs.existsSync("$dir/delay") || fs.existsSync("$dir/delayed")) return;
 			fs.writeFileSync("$dir/delayed", "yes");
 			while (fs.existsSync("$dir/delay")) await new Promise((wake) => setTimeout(wake, 20));
 		});
@@ -113,7 +114,7 @@ cat >"$dir/config/opencode/opencode.json" <<CONFIG
 {
   "update": "disable",
   "model": "stub/none",
-  "plugins": ["$root", "$dir/listen"],
+  "plugins": ["$dir/listen", "$root"],
   "providers": {
     "stub": {
       "name": "Stub",
@@ -372,10 +373,11 @@ waits_for gone "$five" || fail "the relay outlived the model's disconnect"
 
 # Identical shell commands in overlapping sessions retain their own identity.
 
+both_answered() { [ "$(grep -acF '\"role\":\"tool\"' "$heard")" -ge 2 ]; }
 other=$(new_session)
-printf '%s' "$five" >"$dir/delay-session"
 : >"$dir/delay"
 : >"$log"
+: >"$heard"
 printf '"%s/bin/blixel" agent status' "$dir" >"$dir/model-runs"
 prompt "$five" "check first"
 waits_for test -e "$dir/delayed" || fail "the first shell did not wait"
@@ -384,7 +386,8 @@ prompt "$other" "check second"
 waits_for logged "agent status pid=$pid key=$other" || fail "the second status lost its session"
 rm "$dir/delay"
 waits_for logged "agent status pid=$pid key=$five" || fail "the first status lost its session"
-rm "$dir/delay-session" "$dir/delayed"
+waits_for both_answered || fail "the overlapping shells never finished"
+rm "$dir/delayed"
 
 # Phrases in the terminal, whole and in any case, on a screen with no session yet
 
