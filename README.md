@@ -1,54 +1,37 @@
 # Blixel skills
 
-Agent skills for [Blixel](https://blixel.app). They work with Claude Code, Codex,
-pi and any other agent that reads `SKILL.md` skills.
+Two things for coding agents on a Mac with [Blixel](https://blixel.app):
+
+- **Use Blixel from your agent.** The `blixel` skill drives the `blixel` CLI: rooms,
+  chat, transcripts, window sharing, hooks. Any agent that reads `SKILL.md` skills can
+  use it.
+- **Connect a session to a call.** People in the meeting speak or type a request, and
+  it arrives in your session as a handoff. This is `connect-agent`, and it works best
+  with the plugin for your agent.
 
 | Skill | What it does |
 | --- | --- |
-| [`blixel`](skills/blixel/SKILL.md) | Uses the `blixel` CLI to list rooms and who is in them, check the current meeting, read, follow and post to its chat, share windows into it, search, read, export or follow transcripts, and set up hooks that run a command when something happens. |
-| [`connect-agent`](skills/connect-agent/SKILL.md) | Connects a Claude Code, Codex or pi session to your current Blixel meeting, so people in the call can hand it spoken requests. |
-
-## Requirements
-
-[Blixel](https://blixel.app) 0.12 or later on this Mac. Installing the plugin, or
-the skills, is the only setup: they find Blixel's `blixel` command themselves.
-
-To type `blixel` in your own terminal, install Blixel with Homebrew
-(`brew install --cask blixel-app/tap/blixel`) or with
-`curl -fsSL https://blixel.app/install.sh | sh`; both also put the command on your
-`PATH`.
+| [`blixel`](skills/blixel/SKILL.md) | Lists rooms and who is in them, checks the current meeting, reads, follows and posts to its chat, shares windows into it, searches, reads, exports or follows transcripts, and sets up hooks that run a command when something happens. |
+| [`connect-agent`](skills/connect-agent/SKILL.md) | Connects this session to your current meeting, so people in the call can hand it spoken or typed requests. |
 
 ## Install
 
-Claude Code:
+| Agent | Install |
+| --- | --- |
+| Claude Code | `claude plugin marketplace add blixel-app/skills`, then `claude plugin install blixel@blixel-app` |
+| Codex | `codex plugin marketplace add blixel-app/skills`, then `codex plugin add blixel@blixel-app` |
+| pi | `pi install git:github.com/blixel-app/skills` |
+| Any other agent, or skills only | `npx skills add blixel-app/skills`, or copy `skills/blixel` into the agent's skills folder |
 
-```sh
-claude plugin marketplace add blixel-app/skills
-claude plugin install blixel@blixel-app
-```
+Installing is the only setup: the plugin and the skills find Blixel's `blixel` command
+themselves. In Codex, also trust the plugin's hooks, as [below](#codex).
 
-Codex:
+The CLI needs Blixel 0.12 or later. Connecting a session needs 0.16 or later, in
+`/Applications` or `~/Applications`.
 
-```sh
-codex plugin marketplace add blixel-app/skills
-codex plugin add blixel@blixel-app
-```
+## Use Blixel from your agent
 
-pi:
-
-```sh
-pi install git:github.com/blixel-app/skills
-```
-
-Any other agent that reads `SKILL.md` skills:
-
-```sh
-npx skills add blixel-app/skills
-```
-
-Or copy `skills/blixel` into the agent's skills folder.
-
-## Then ask your agent
+Ask in your own words:
 
 - "Summarise my last Blixel call and post the action items to the chat."
 - "What have people said in the call's chat so far?"
@@ -56,74 +39,129 @@ Or copy `skills/blixel` into the agent's skills folder.
 - "Share my Figma window into the call."
 - "What did we decide about the release in yesterday's standup?"
 
-The agent asks before anything that others in the call will see: chat messages
-and window sharing.
+The agent asks before anything that others in the call will see: chat messages and
+window sharing.
 
-## Connecting Claude Code, Codex or pi to a call
+To type `blixel` in your own terminal, install Blixel with Homebrew
+(`brew install --cask blixel-app/tap/blixel`) or with
+`curl -fsSL https://blixel.app/install.sh | sh`; both also put the command on your
+`PATH`.
 
-Run `/blixel:connect` in the Claude Code session that should take requests while
-Blixel is in a meeting, or ask it to connect to Blixel. People in the call can then speak or type a request
-to it from Blixel; each arrives in that session through its "Blixel handoffs"
-monitor as the message you set in Blixel's Settings › Agents, the request alone by
-default. The skill tells the agent it is a colleague's suggestion rather than your
-instruction, and the agent asks you before anything destructive. A meeting has one
-connected session: connecting another replaces it. Leaving the room ends the
-connection.
+## Connect a session to a call
 
-In Claude Code with mods on, in the terminal or the desktop app, the plugin's mod
-delivers each handoff as a prompt of its own, after any turn in progress, worded
-exactly as your message template in Blixel's Settings › Agents makes it. After you
-stop a turn with Esc, Claude Code holds back new prompts until you send a message,
-so a handoff waits for that, and the status line says so. `/blixel:connect
-[ask|direct]`, `/blixel:status` and `/blixel:disconnect` connect, check and
-disconnect without asking Claude, as do `connect blixel`, `blixel status` and
-`disconnect blixel` as a prompt of their own, and the Blixel pane, which `/blixel:status`
-opens (and, in the desktop app, connecting), shows the meeting and the handoffs
-it sent this session, each with who sent it. The status line names the meeting
-too. Nothing runs for Blixel in a session until you connect it, or ask it to, and
-everything stops when the connection ends; `/blixel:status` reads once. Claude Code
-binds a connection to its process, so a session resumed with `claude --resume`
-connects again. Without mods, `/blixel:connect` connects before Claude answers, the other two
-commands ask Claude to use the skill, and the plugin's monitor delivers the handoffs. Where plugin monitors don't run
-either, as in the Claude desktop app, the skill starts a Monitor for them and
-starts it again each time Claude Code stops it after 30 minutes. Without the mod,
-the session needs Claude Code monitors: before Claude Code 2.1.310 they don't run
-when `DISABLE_TELEMETRY` or `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is set, or on
-Amazon Bedrock, Google Cloud's Agent Platform or Microsoft Foundry. If handoffs stop arriving, run
-`/blixel:connect` again. With Claude Code's Bash sandbox on, add the socket
-path that `blixel agent connect` reports to `sandbox.network.allowUnixSockets`.
-Connecting needs Blixel in `/Applications` or `~/Applications`.
+While Blixel is in a meeting, connect the session that should take requests. People in
+the call can then speak or type to it from Blixel. Each request arrives as a handoff,
+worded as the message you set in Blixel's Settings › Agents, the request alone by
+default.
 
-Installed as a skill only (`npx skills add`), connecting still works, but after `/clear` or a compaction ask the session to connect to Blixel again, or it will not act on the handoffs it keeps receiving.
+- The agent treats a handoff as a colleague's suggestion, not your instruction, and
+  asks you before anything destructive.
+- A meeting has one connected session: connecting another replaces it. Leaving the room
+  ends the connection.
+- Nothing runs for Blixel in a session until you connect it, and everything stops when
+  the connection ends.
 
-In Codex, trust the plugin's hooks when Codex asks at start, or later in `/hooks`
-(**Review hooks** in the ChatGPT app), and again after an update that changes them: without them no handoff arrives. Then
-pick `$blixel:connect` (type `$con`, then Enter twice), with `ask` or `direct` after
-it to choose whether Blixel asks you before each handoff. Typing `connect blixel`,
-`blixel connect` or `blixel:connect` as a prompt of its own does the same, and
-`$blixel:status` and `$blixel:disconnect`, or `blixel status` and `disconnect blixel`,
-check and disconnect. None of these calls a model. Nothing runs for Blixel in a session until you connect it or ask it to, beyond
-a filter of about 6 ms on each prompt and shell command, and everything stops when
-the connection ends. The hooks follow the thread and queue each handoff into it with
-`codex queue`, and Codex runs it after any turn in progress. You can also ask the
-session to connect to the Blixel call; Codex's sandbox blocks Blixel's local socket,
-so approve running the CLI inside Blixel.app outside the sandbox when Codex asks; if
-it can't ask, run `/permissions` and choose Approve for me. If you take over 2 minutes
-to approve, connect again. Codex needs Blixel in `/Applications` or `~/Applications`. A plain `codex` session runs on Codex's shared app-server,
-where a handoff still runs after you close its terminal, so ask the session to
-disconnect before you close it. After `/new` or `/resume`, handoffs stay with the
-conversation that connected: `$blixel:status` says so, and connecting from the new
-one moves them.
+### Connect without a model turn
 
-In pi, type `/blixel:connect`, with `ask` or `direct` after it, or `connect blixel`,
-`blixel connect` or `blixel:connect` as a prompt of its own; `/blixel:status` and
-`/blixel:disconnect`, or `blixel status` and `disconnect blixel`, check and disconnect.
-None of these calls a model. Asked in words, pi tells you to type the command. Nothing
-runs for Blixel in a session until you connect it, and everything stops when the
-connection ends. Each handoff arrives as a prompt, after any turn in progress, so Esc
-puts one still waiting back in your editor unrun. Quitting pi or starting a new session
-(`/new`, `/resume`, `/fork`) ends the connection. It needs Blixel 0.16 or later in
-`/Applications` or `~/Applications`.
+With the plugin, you can connect, check and disconnect without calling a model, so it
+answers at once and spends no tokens. Two ways to say it:
+
+- **The command:** `/blixel:connect`, `/blixel:status`, `/blixel:disconnect`. Codex has
+  no plugin commands, so there it is `$blixel:connect` and so on: type `$con`, then
+  Enter twice.
+- **A phrase, as a whole prompt in any case:** `connect blixel`, `blixel connect` or
+  `blixel:connect`, and the same with `status` and `disconnect`.
+
+Add `ask` or `direct` after connect to choose whether Blixel asks you before each
+handoff. A handoff that says one of these phrases doesn't run it: it reaches the agent as a
+request like any other.
+
+### What you get on each agent
+
+| Feature | Claude Code, mods on | Claude Code, mods off | Codex | pi | Skills only |
+| --- | --- | --- | --- | --- | --- |
+| Connect by command | No model | Connects, then Claude answers | No model | No model | None |
+| Status and disconnect by command | No model | Asks Claude | No model | No model | None |
+| Phrases | No model | Reach Claude as a prompt | No model | No model | Reach the model as a prompt |
+| Asking in words | Claude uses the skill | Claude uses the skill | Codex uses the skill, with your approval | pi asks you to type the command | Claude Code only |
+| A handoff arrives as | A prompt of its own | A monitor's notification | A queued message | A prompt of its own | A monitor's notification |
+| Handoff rules kept after `/clear` or a compaction | Yes | Yes | Yes | Yes | No: connect again |
+| Meeting in the status line, Blixel pane | Yes | No | No | No | No |
+| Runs before you connect | Nothing | Nothing | A 6 ms filter on each prompt and shell command | Nothing | Nothing |
+
+Without the plugin there are no commands or phrases to catch, so everything goes through
+a normal model turn. That works in Claude Code, where the skill starts a monitor itself.
+Codex and pi need the plugin to receive handoffs, so with the skills alone they only get
+the `blixel` skill, as does any other agent.
+
+### How each piece works
+
+- **Skill:** instructions the agent reads when it needs them. Using one takes a model
+  turn.
+- **Plugin:** what you install to add commands and code to an agent.
+- **Mod (Claude Code):** the plugin's code, running inside the session. It answers
+  commands and phrases, follows the call, and submits handoffs as prompts.
+- **Monitor (Claude Code):** a background command whose output reaches the session line
+  by line.
+- **Hooks (Codex):** commands Codex runs at set moments, once you trust them.
+- **Extension (pi):** the package's code, running inside pi.
+- **Relay:** `blixel agent relay`, which follows the call and runs a small program for
+  each handoff. It exits by itself when the session goes.
+
+| Agent | Answers commands | Follows the call | Delivers a handoff |
+| --- | --- | --- | --- |
+| Claude Code, mods on | The mod | The mod | Submits a prompt |
+| Claude Code, mods off | A hook and the command's `!` line | The plugin's monitor | Monitor notification |
+| Claude Code, skills only | The model | A Monitor the model starts | Monitor notification |
+| Codex | Hooks | A relay in an async hook | `codex queue` |
+| pi | The extension | A relay the extension starts | `pi.sendUserMessage` |
+
+### Claude Code
+
+- **Handoffs and Esc:** after you stop a turn with Esc, Claude Code holds back new
+  prompts until you send a message, so a handoff waits for that, and the status line
+  says so.
+- **The pane:** `/blixel:status` opens the Blixel pane, as does connecting in the
+  desktop app. It shows the meeting and the handoffs this session received, each with
+  who sent it.
+- **Phrases:** Claude Code shows the answer as "Prompt dropped by a hook: …". That is
+  how a plugin stops a prompt, and nothing went wrong.
+- **Resuming:** a connection belongs to the process, so a session resumed with
+  `claude --resume` connects again.
+- **Monitors off:** where plugin monitors don't run, as in the Claude desktop app, the
+  skill starts a Monitor, and starts it again each time Claude Code stops it after 30
+  minutes.
+- **No mod:** the session needs Claude Code monitors. Before Claude Code 2.1.310 they
+  don't run when `DISABLE_TELEMETRY` or `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is
+  set, or on Amazon Bedrock, Google Cloud's Agent Platform or Microsoft Foundry.
+- **Sandbox:** with the Bash sandbox on, add the socket path that
+  `blixel agent connect` reports to `sandbox.network.allowUnixSockets`.
+
+If handoffs stop arriving, run `/blixel:connect` again.
+
+### Codex
+
+- **Trust the hooks first:** without them no handoff arrives. Trust them when Codex asks
+  at start, or later in `/hooks` (**Review hooks** in the ChatGPT app), and again after
+  an update that changes them.
+- **Handoffs:** the hooks queue each one into the thread, and Codex runs it after any
+  turn in progress. It takes a few seconds to start.
+- **Asking in words:** Codex's sandbox blocks Blixel's local socket, so the first
+  attempt fails and takes a few more seconds. Approve running the CLI outside the
+  sandbox when Codex asks; if it can't ask, run `/permissions` and choose Approve for
+  me. If you take over 2 minutes to approve, connect again.
+- **Closing the terminal:** a plain `codex` session runs on Codex's shared app-server,
+  where a handoff still runs after you close its terminal. Disconnect before you close
+  it.
+- **New conversations:** after `/new` or `/resume`, handoffs stay with the conversation
+  that connected. `$blixel:status` says so, and connecting from the new one moves them.
+
+### pi
+
+- **Handoffs:** each arrives as a prompt, after any turn in progress. Esc puts one still
+  waiting back in your editor unrun.
+- **New sessions:** quitting pi or starting a new session (`/new`, `/resume`, `/fork`)
+  ends the connection.
 
 ## Releasing
 
@@ -166,11 +204,13 @@ name the CLI by full path, so a development build's has to be named to the sessi
 there, and it asks before it runs. `tests/claude-routes.sh` fails if a route goes back
 to a bare `blixel`.
 
-`skills/connect-agent/SKILL.md` holds what every agent shares; each agent's part is
-in `references/`, the file a failed `blixel agent connect` names.
+`skills/connect-agent/SKILL.md` holds what every agent shares, and no skill's text names
+an agent: each agent's part is in `references/`, the file a failed
+`blixel agent connect` names.
 
-Connecting takes at most one model step before `blixel agent connect`. Each release
-compares real connect times with the last one.
+A typed connect takes no model step. Asked in words it takes the steps of reading the
+skill, and in Codex a failed try and its reference. Each release compares real connect
+times with the last one.
 
 `skills/blixel/scripts/blixel` and `skills/connect-agent/scripts/blixel` are the
 same script, so each skill works installed on its own; change them together.
