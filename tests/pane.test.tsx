@@ -385,6 +385,7 @@ test('a typed phrase leaves the prompt box empty', async ($, on) => {
     filled.push(e.text)
     return { isFilled: true }
   })
+  on('prompt.read', () => ({ value: { text: 'connect blixel', cursor: 14 } }))
   await start($)
 
   await typed($, 'connect blixel')
@@ -393,6 +394,25 @@ test('a typed phrase leaves the prompt box empty', async ($, on) => {
   await stub.clock.advance(100)
   await stub.settle()
   expect(filled).toEqual([''])
+})
+
+test('text typed while a phrase ran stays in the prompt box', async ($, on) => {
+  const cli = connectedCli()
+  const stub = stage(on, { cli: command => cli.answer(command) })
+  const filled: string[] = []
+  on('prompt.fill', ($, e) => {
+    filled.push(e.text)
+    return { isFilled: true }
+  })
+  on('prompt.read', () => ({ value: { text: 'connect blixelnext thought', cursor: 26 } }))
+  await start($)
+
+  await typed($, 'connect blixel')
+  await stub.settle()
+
+  await stub.clock.advance(100)
+  await stub.settle()
+  expect(filled).toEqual([])
 })
 
 test('a typed connect takes ask or direct', async ($, on) => {

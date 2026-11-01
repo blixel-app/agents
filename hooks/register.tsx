@@ -571,8 +571,11 @@ export const register: Register = on => {
       status: () => status($, session),
     }
     const text = await answers[verb as keyof typeof answers]()
-    // A prompt that does not enter goes back in the box, whatever stopped it.
-    $.clock.after(50, () => void $.prompt.fill({ text: '', mode: 'replace' }))
+    // The only way not to enter: Claude Code prefixes the answer with "Prompt dropped
+    // by a hook:" and puts the text back in the box. `$.command.run` is refused here.
+    $.clock.after(50, async () => {
+      if ((await $.prompt.read()).text === e.text) await $.prompt.fill({ text: '', mode: 'replace' })
+    })
     return { drop: text }
   })
 
