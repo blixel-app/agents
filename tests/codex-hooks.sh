@@ -259,6 +259,27 @@ tells "claims the session" "$(cat "$log")" "blixel agent connect pid=$(cat "$dir
 echo '{"data":{"outcome":"connected","receiving":false,"replaced":true},"schema_version":1}' >"$dir/connect"
 tells "replaced" "$(reason "$(prompt "connect blixel")")" "no longer receives them"
 
+# Codex desktop sends a command picked from the list as a link to its skill, with
+# a space and a line break after it.
+desktop() { printf '[$blixel:%s](/Applications/Codex.app/plugins/blixel/codex-skills/%s/SKILL.md) \\n' "$1" "$1"; }
+
+reset
+: >"$log"
+tells "desktop connect" "$(reason "$(prompt "$(desktop connect)")")" "Connected to the Blixel meeting"
+logged "agent connect pid=" || fail "desktop connect: asked nothing"
+tells "desktop status" "$(reason "$(prompt "$(desktop status)")")" "Blixel"
+tells "desktop disconnect" "$(reason "$(prompt "$(desktop disconnect)")")" "Disconnected"
+
+reset
+both answers-first "$(desktop connect)"
+receiving "a desktop connect"
+stops "ended disconnected"
+
+reset
+silent "desktop, words after it go to the model" "$(prompt "$(desktop connect) please")"
+silent "desktop, another skill goes to the model" "$(prompt '[$blixel:blixel](/x/SKILL.md) \\n')"
+never "desktop, words after it go to the model" "$(cat "$log")" "blixel agent"
+
 reset
 for words in "connect blixel please" '$blixel:connect please' '$blixel:connect ask' "connect blixel direct" \
 	'$blixel:status now' "disconnect blixel please" "blixel status direct"; do

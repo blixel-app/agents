@@ -30,8 +30,13 @@ field() { # key path, JSON
 }
 
 # The command a prompt is, if it is one: the whole prompt, in any case, as the
-# picker writes it ($blixel:connect) or a plain spelling.
+# picker writes it ($blixel:connect) or a plain spelling. Codex desktop sends a
+# pick as a link to the skill, `[$blixel:connect](<path>)`, with whitespace after.
 command_of() { # prompt
+	set -- "$1" "${1#*](}"
+	case $1 in '[$blixel:'*']('*')'*)
+		case ${2#*)} in *[![:space:]]*) ;; *) set -- "${1%%](*}" && set -- "${1#?}" ;; esac ;;
+	esac
 	case $(printf '%s' "$1" | tr '[:upper:]' '[:lower:]') in
 	'$blixel:connect' | 'connect blixel' | 'blixel connect' | 'blixel:connect') echo connect ;;
 	'$blixel:status' | 'status blixel' | 'blixel status' | 'blixel:status') echo status ;;
