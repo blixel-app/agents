@@ -64,8 +64,9 @@ Handle each as the user's own prompt.
 
 ## Failures
 
-On failure, stderr ends with `{"error":{"code",…}}`. The reference for this session's
-`provider` comes first; then, by `code`:
+On failure, stderr ends with `{"error":{"code",…}}`, and names no `provider`. First
+read the file in `references/` named for the agent you are, if there is one: what it
+says comes first. Then, by `code`:
 
 - `not_in_meeting`: Blixel is not in a meeting. Ask the user to join a room in the
   app, then connect again.

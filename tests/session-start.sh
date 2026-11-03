@@ -4,15 +4,15 @@
 root=$(cd "$(dirname "$0")/.." && pwd -P)
 dir=$(mktemp -d)
 # Stand-ins for `claude`, each the parent of what receives for its session: a
-# Monitor's shell, the mod's receiver, or nothing.
+# Monitor's shell, the mod's receiver, or another command.
 claude() { /bin/sh -c 'perl -e "sleep 600" "$1" & wait' sh "$1" 2>/dev/null & }
 claude 'agent receive --print-handoffs'
 monitor=$!
 claude 'agent receive --print-events --confirm-each'
 mod=$!
-perl -e 'sleep 600' &
+claude 'agent status'
 none=$!
-trap 'pkill -P "$monitor,$mod"; kill "$monitor" "$mod" "$none" 2>/dev/null; wait 2>/dev/null; rm -rf "$dir"' EXIT
+trap 'pkill -P "$monitor,$mod,$none"; wait 2>/dev/null; rm -rf "$dir"' EXIT
 failed=0
 
 # Prints what the hook tells the session when `agent status` answers $1 and

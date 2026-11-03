@@ -24,6 +24,9 @@ done
 
 grep -qF 'read `references/<provider>.md` beside this file' "$skill/SKILL.md" ||
 	fail "SKILL.md does not send the model to the provider's reference"
+# A failure answers no provider, so the model finds its file by what it is.
+grep -qF 'read the file in `references/` named for the agent you are' "$skill/SKILL.md" ||
+	fail "SKILL.md leaves a failed connect with no way to its reference"
 grep -qF 'tell the user their agent can'"'"'t receive handoffs' "$skill/SKILL.md" ||
 	fail "SKILL.md has no last resort for an agent with no reference"
 
