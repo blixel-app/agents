@@ -129,6 +129,13 @@ answers 200
 delivers "another server's pid" 69 4343
 [ ! -e "$dir/requests" ] || fail "another server's pid: posted $(cat "$dir/requests")"
 
+# A server that never answers is given up on within the 10 s the sender waits.
+answers 200
+echo 12 >"$dir/delay"
+started=$(/bin/date +%s)
+delivers "a server that never answers" 1
+[ $(($(/bin/date +%s) - started)) -lt 10 ] || fail "a server that never answers: waited $(($(/bin/date +%s) - started)) s"
+
 kill "$server"
 wait "$server" 2>/dev/null
 delivers "the server is gone" 1
