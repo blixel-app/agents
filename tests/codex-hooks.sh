@@ -49,7 +49,18 @@ case "\$*" in
 	ended) event ended "{\"reason\":\"\$code\"}"; exit 0 ;;
 	*) echo "{\"error\":{\"code\":\"\$code\",\"message\":\"Stopped\"}}" >&2; exit "\$status" ;;
 	esac ;;
-"agent status") cat "\$dir/status" ;;
+"agent status")
+	# With status-live, the app's answer for a connected session that receives
+	# while a receiver is live.
+	if [ -f "\$dir/status-live" ]; then
+		receiving=false
+		for live in "\$dir"/receiver.*; do
+			[ -f "\$live" ] && kill -0 "\$(cat "\$live")" 2>/dev/null && receiving=true
+		done
+		printf '{"data":{"meeting_id":"m","connection":{"connection_id":"c-1","agent_pid":1},"session":{"connection_id":"c-1","receiving":%s}}}' "\$receiving"
+	else
+		cat "\$dir/status"
+	fi ;;
 "agent disconnect")
 	rm -f "\$dir/connection"
 	cat "\$dir/disconnect" ;;
@@ -287,14 +298,13 @@ printf '{"data":{"meeting_id":"m","connection":{"connection_id":"c-1","agent_pid
 status_says "this thread" "Handoffs from people in it arrive in this conversation"
 printf '{"data":{"meeting_id":"m","connection":{"connection_id":"c-1","agent_pid":1},"session":{"connection_id":"c-1","receiving":false}}}' >"$dir/status"
 status_says "this thread, not receiving" 'not receiving its handoffs. Type $blixel:connect'
-# Hook 2 starts its receiver again on this same prompt, so the app may not yet know.
+# The thread's flag says hook 2 starts its receiver again on this same prompt; one
+# that never attaches is still not receiving.
 mkdir -p "$dir/data/$thread"
 echo "$$" >"$dir/data/$thread/connected"
 typed '$blixel:status' >"$dir/typed"
 /bin/zsh -c "$answers" <"$dir/typed" >"$dir/told"
-told=$(reason "$(cat "$dir/told")")
-tells "this thread, its receiver starting again" "$told" "Handoffs from people in it arrive in this conversation"
-never "this thread, its receiver starting again" "$told" "not receiving"
+tells "this thread, no receiver comes back" "$(reason "$(cat "$dir/told")")" 'not receiving its handoffs. Type $blixel:connect'
 rm -rf "$dir/data/$thread"
 echo '{"data":{"meeting_id":"m","connection":{"connection_id":"c-1","agent_pid":1},"session":{"connected":false}}}' >"$dir/status"
 status_says "another session" "Another session"
@@ -447,6 +457,25 @@ kill -9 "$(cat "$dir"/receiver.*)"
 wait "$host"
 rm -f "$dir"/receiver.*
 again "a status prompt brings it back too" '$blixel:status'
+
+# Hook 1 answers that status prompt with the app's word once hook 2's receiver is back.
+reset
+touch "$dir/status-live"
+both answers-first "connect blixel"
+receiving "a connect"
+kill -9 "$(cat "$dir"/receiver.*)"
+wait "$host"
+rm -f "$dir"/receiver.*
+typed '$blixel:status' >"$dir/asked"
+/bin/zsh -c "$receives" <"$dir/asked" &
+host=$!
+/bin/zsh -c "$answers" <"$dir/asked" >"$dir/told"
+told=$(reason "$(cat "$dir/told")")
+tells "a status prompt that brings it back" "$told" "Handoffs from people in it arrive in this conversation"
+never "a status prompt that brings it back" "$told" "not receiving"
+receiving "a status prompt that brings it back"
+stops "ended disconnected"
+rm -f "$dir/status-live"
 
 for how in "ended disconnected" "ended replaced" "ended meeting_ended" "ended agent_exited" "error not_connected 5" \
 	"error agent_unverified 4"; do

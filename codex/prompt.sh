@@ -42,10 +42,18 @@ connect() {
 
 status() {
 	ask_blixel status
+	# With the flag, hook 2 starts a stopped receiver again on this same prompt: the
+	# answer waits up to 5 s for the app to see it.
+	tries=0
+	while connected && [ "$tries" -lt 10 ] && field data.session.connection_id "$answer" >/dev/null &&
+		[ "$(field data.session.receiving "$answer")" != true ]; do
+		sleep 0.5
+		tries=$((tries + 1))
+		ask_blixel status
+	done
 	field error.code "$answer" >/dev/null && refused ""
 	if field data.session.connection_id "$answer" >/dev/null; then
-		# With the flag, hook 2 is starting its receiver again on this same prompt.
-		[ "$(field data.session.receiving "$answer")" = true ] || connected ||
+		[ "$(field data.session.receiving "$answer")" = true ] ||
 			stop 'Connected to the Blixel meeting, but not receiving its handoffs. Type $blixel:connect to receive them.'
 		stop "$(shared "Connected to the Blixel meeting. Handoffs from people in it arrive in this conversation.")"
 	elif [ "$(field data.connection.agent_pid "$answer")" = "$PPID" ]; then
