@@ -287,6 +287,15 @@ printf '{"data":{"meeting_id":"m","connection":{"connection_id":"c-1","agent_pid
 status_says "this thread" "Handoffs from people in it arrive in this conversation"
 printf '{"data":{"meeting_id":"m","connection":{"connection_id":"c-1","agent_pid":1},"session":{"connection_id":"c-1","receiving":false}}}' >"$dir/status"
 status_says "this thread, not receiving" 'not receiving its handoffs. Type $blixel:connect'
+# Hook 2 starts its receiver again on this same prompt, so the app may not yet know.
+mkdir -p "$dir/data/$thread"
+echo "$$" >"$dir/data/$thread/connected"
+typed '$blixel:status' >"$dir/typed"
+/bin/zsh -c "$answers" <"$dir/typed" >"$dir/told"
+told=$(reason "$(cat "$dir/told")")
+tells "this thread, its receiver starting again" "$told" "Handoffs from people in it arrive in this conversation"
+never "this thread, its receiver starting again" "$told" "not receiving"
+rm -rf "$dir/data/$thread"
 echo '{"data":{"meeting_id":"m","connection":{"connection_id":"c-1","agent_pid":1},"session":{"connected":false}}}' >"$dir/status"
 status_says "another session" "Another session"
 echo '{"data":{}}' >"$dir/status"
