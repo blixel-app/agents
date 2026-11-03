@@ -9,42 +9,113 @@ command -v pi >/dev/null || {
 }
 dir=$(mktemp -d)
 dir=$(cd "$dir" && pwd -P)
-trap 'exec 3>&-; kill "$pi" 2>/dev/null; rm -rf "$dir"' EXIT
+trap 'exec 3>&-; kill "$pi" 2>/dev/null; pkill -f "$dir/bin/blixel"; rm -rf "$dir"' EXIT
 failed=0
 log=$dir/log
 heard=$dir/heard
-mkdir "$dir/bin" "$dir/planted" "$dir/handoffs" "$dir/agent"
+mkdir "$dir/bin" "$dir/planted" "$dir/handoffs" "$dir/agent" "$dir/gate"
 
-# Stands in for `blixel`: logs each call with who made it, and a relay runs its submit
-# on whatever lands in handoffs/.
+# Stands in for `blixel`, as the real CLI answers: the session is the one PI_SESSION_ID
+# names, or the variable `--session-env` names; a meeting has one connection, and
+# connecting replaces another session's; `receive` refuses a session with no connection
+# (`not_connected`, exit 5), ends at once with `received_elsewhere` beside a live
+# receiver, and otherwise prints `receiving`, runs its program once for each file in
+# handoffs/, and ends with `ended` when the connection does. The test makes it stop with
+# a word by writing `ended <reason>` or `error <code> <exit status>` to stops; SIGTERM
+# stops it with none, exit 143. Attaching and stopping take a moment, as the real
+# one's do. Each call is logged with its session and parent.
 cat >"$dir/bin/blixel" <<STANDIN
 #!/bin/sh
 dir=$dir
 STANDIN
 cat >>"$dir/bin/blixel" <<'STANDIN'
-echo "$* pid=$BLIXEL_AGENT_PID key=$BLIXEL_AGENT_SESSION_KEY provider=$BLIXEL_AGENT_PROVIDER name=$BLIXEL_AGENT_NAME" >>"$dir/log"
+key=$PI_SESSION_ID
+named=
+for arg; do
+	[ "$named" != next ] || eval "key=\${$arg}" named=
+	[ "$arg" != --session-env ] || named=next
+done
+echo "$1 $2${3:+ $3}${4:+ $4} session=$key parent=$PPID" >>"$dir/log"
+event() { printf '{"data":%s,"event":"%s","schema_version":1}\n' "$2" "$1"; }
+live() { [ -f "$dir/receiver" ] && kill -0 "$(cat "$dir/receiver")" 2>/dev/null; }
+receiving() { if live && [ -f "$dir/attached" ]; then echo true; else echo false; fi; }
+connected=$(cat "$dir/connection" 2>/dev/null)
 case $2 in
-relay)
-	echo "$$" >"$dir/relay"
+connect)
+	echo '{"data":{"request_id":"r-1"},"event":"request_id","schema_version":1}' >&2
+	if [ -f "$dir/connect" ]; then
+		cat "$dir/connect" >&2
+		exit 5
+	fi
+	replaced=false
+	[ -z "$connected" ] || [ "$connected" = "$key" ] || replaced=true
+	echo "$key" >"$dir/connection"
+	printf '{"data":{"outcome":"connected","receiving":%s,"replaced":%s,"connection":{"connection_id":"c-%s","provider":"pi"}},"schema_version":1}\n' \
+		"$(receiving)" "$replaced" "$key"
+	;;
+status)
+	session='{}'
+	[ "$connected" != "$key" ] || session="{\"connected\":true,\"receiving\":$(receiving),\"connection_id\":\"c-$key\"}"
+	[ -z "$connected" ] || connection=",\"connection\":{\"connection_id\":\"c-$connected\"}"
+	printf '{"data":{"meeting_id":"m-1","session":%s%s},"schema_version":1}\n' "$session" "$connection"
+	;;
+disconnect)
+	if [ -n "$connected" ] && [ "$connected" = "$key" ]; then
+		rm -f "$dir/connection"
+		echo '{"data":{"outcome":"disconnected","connection_id":"c-'"$key"'"},"schema_version":1}'
+	else
+		echo '{"data":{"outcome":"not_connected"},"schema_version":1}'
+	fi
+	;;
+receive)
+	if [ -z "$connected" ] || [ "$connected" != "$key" ]; then
+		echo '{"error":{"code":"not_connected","message":"This session is not connected to the meeting","hint":"Run `blixel agent connect` first."}}' >&2
+		exit 5
+	fi
+	if live; then
+		event ended '{"reason":"received_elsewhere"}'
+		exit 0
+	fi
+	echo "$$" >"$dir/receiver"
 	echo "$BLIXEL_PI_SOCKET" >"$dir/socket"
-	trap 'echo "relay stopped" >>"$dir/log"; exit 0' TERM
-	while [ ! -e "$dir/end-relay" ]; do
+	trap 'echo "receive stopped" >>"$dir/log"; sleep 0.3; rm -f "$dir/receiver" "$dir/attached"; exit 143' TERM
+	sleep 0.2
+	: >"$dir/attached"
+	event receiving "{\"connection_id\":\"c-$key\"}"
+	n=0
+	while :; do
+		now=$(cat "$dir/connection" 2>/dev/null)
+		if [ "$now" != "$key" ]; then
+			rm -f "$dir/receiver" "$dir/attached"
+			if [ -n "$now" ]; then event ended '{"reason":"replaced"}'; else event ended '{"reason":"disconnected"}'; fi
+			exit 0
+		fi
+		if [ -f "$dir/stops" ]; then
+			read -r how code status <"$dir/stops"
+			rm -f "$dir/stops" "$dir/receiver" "$dir/attached"
+			case $how in
+			ended) event ended "{\"reason\":\"$code\"}"; exit 0 ;;
+			*) echo "{\"error\":{\"code\":\"$code\",\"message\":\"It stopped\",\"hint\":\"Try again.\"}}" >&2; exit "$status" ;;
+			esac
+		fi
 		for file in "$dir"/handoffs/*; do
 			[ -f "$file" ] || continue
-			"$4" "$(cat "$file")"
-			echo "submit exit=$?" >>"$dir/log"
+			n=$((n + 1))
+			BLIXEL_HANDOFF_ID=$n BLIXEL_HANDOFF_SENDER=Ana BLIXEL_AGENT_PID=$PPID BLIXEL_AGENT_SESSION_KEY=$key \
+				BLIXEL_AGENT_PROVIDER=pi "$4" "$(cat "$file")" </dev/null >/dev/null 2>&1
+			code=$?
+			echo "submit exit=$code" >>"$dir/log"
+			case $code in 0) state=delivered ;; 69) state=failed ;; *) state=unknown ;; esac
+			event delivered "{\"id\":\"$n\",\"state\":\"$state\"}"
 			rm -f "$file"
 		done
 		sleep 0.02
 	done
-	rm -f "$dir/end-relay"
 	;;
-connect) cat "$dir/connect" 2>/dev/null || echo '{"data":{"outcome":"connected"}}' ;;
-disconnect) echo '{"data":{"outcome":"disconnected"}}' ;;
-status) cat "$dir/status" 2>/dev/null || echo '{"data":{"meeting_id":"m-1","session":{"connection_id":"c-1"}}}' ;;
 esac
 STANDIN
 chmod +x "$dir/bin/blixel"
+cli=$dir/bin/blixel
 
 printf '#!/bin/sh\necho "$*" >>"%s/planted-ran"\n' "$dir" >"$dir/planted/blixel"
 chmod +x "$dir/planted/blixel"
@@ -74,6 +145,8 @@ const server = http.createServer((request, response) => {
 		response.end(chunk({ role: "assistant", tool_calls: [call] }) + chunk({}, "tool_calls") + "data: [DONE]\n\n");
 	});
 });
+// A reload loads this file again, and its server is already listening.
+server.on("error", () => {});
 server.listen($port, "127.0.0.1");
 server.unref();
 
@@ -86,11 +159,24 @@ export default function (pi: any) {
 	pi.on("before_provider_request", async (e: any) => {
 		if (fs.existsSync("$dir/hold")) hear({ held: true });
 		while (fs.existsSync("$dir/hold")) await new Promise((wake) => setTimeout(wake, 20));
-		const body = JSON.stringify(e.payload);
-		hear({ sent: JSON.stringify(e.payload.messages.at(-1)), rules: body.includes("they connected it to receive handoffs") });
+		const last = e.payload.messages.at(-1);
+		hear({ sent: JSON.stringify(last) });
+		if (last.role === "tool") fs.writeFileSync("$dir/model-read", typeof last.content === "string" ? last.content : JSON.stringify(last.content));
 	});
+	pi.registerCommand("test-reload", { handler: async (_args: any, ctx: any) => ctx.reload() });
 }
 LISTEN
+
+# A permission gate, as a package installed after Blixel's, so its tool_call handler
+# runs after Blixel's: with gate-blocks it blocks every bash call.
+echo '{"name":"gate","pi":{"extensions":["./gate.ts"]}}' >"$dir/gate/package.json"
+cat >"$dir/gate/gate.ts" <<GATE
+import * as fs from "node:fs";
+
+export default function (pi: any) {
+	pi.on("tool_call", () => (fs.existsSync("$dir/gate-blocks") ? { block: true, reason: "Blocked by user" } : undefined));
+}
+GATE
 
 fail() { echo "FAIL: $1"; failed=1; }
 
@@ -108,6 +194,7 @@ logged() { holds "$log" "$1"; }
 never() { # name, text
 	if logged "$2"; then fail "$1: ran \"$2\""; fi
 }
+count() { grep -c -- "$1" "$log"; }
 
 start_pi() {
 	: >"$dir/out"
@@ -147,19 +234,34 @@ reaches_pi() { # what is typed; pi must take it as a prompt, and nothing of ours
 sent() { grep -aF '{"sent":' "$heard" | grep -qF -- "$1"; }
 
 handoff() { # the text; waits for its submit
-	submits=$(grep -c '^submit exit=' "$log")
+	submits=$(count '^submit exit=')
 	printf '%s' "$1" >"$dir/next"
 	mv "$dir/next" "$dir/handoffs/next"
 	waits_for submitted || fail "no submit for: $1"
 }
-submitted() { [ "$(grep -c '^submit exit=' "$log")" -gt "$submits" ]; }
+submitted() { [ "$(count '^submit exit=')" -gt "$submits" ]; }
 
-alive() { kill -0 "$(cat "$dir/relay")" 2>/dev/null; }
+alive() { kill -0 "$(cat "$dir/receiver" 2>/dev/null)" 2>/dev/null; }
 gone() { ! alive; }
+stops() { # how the receiver stops: `ended <reason>` or `error <code> <exit status>`
+	echo "$1" >"$dir/stops"
+	waits_for test ! -e "$dir/stops" || fail "the receiver never read: $1"
+}
+receives_again() { # name; a new receive since the log was emptied, and no connect
+	waits_for logged "agent receive" || fail "$1: no receive again"
+	never "$1" "agent connect"
+	waits_for alive || fail "$1: no receiver"
+}
+stays_stopped() { # name; nothing receives a moment later, past the first restart
+	sleep 1.3
+	never "$1" "agent receive"
+	gone || fail "$1: a receiver runs"
+}
 
 # Install
 
 PI_CODING_AGENT_DIR="$dir/agent" pi install "$root" >/dev/null 2>"$dir/err" || fail "pi install: $(cat "$dir/err")"
+PI_CODING_AGENT_DIR="$dir/agent" pi install "$dir/gate" >/dev/null 2>"$dir/err" || fail "pi install gate: $(cat "$dir/err")"
 
 export BLIXEL_HOOK_PATH="$dir/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 : >"$log"
@@ -171,27 +273,29 @@ waits_for holds "$dir/out" '"id":"commands"' || fail "no commands"
 for name in blixel:connect blixel:status blixel:disconnect skill:blixel skill:connect-agent; do
 	holds "$dir/out" "\"name\":\"$name\"" || fail "not installed: $name"
 done
+if holds "$dir/out" "[ask|direct]"; then fail "a command still offers ask or direct"; fi
 
 # Nothing runs in a session until the user connects
 
 reaches_pi "good morning"
 [ ! -s "$log" ] || fail "ran before any connect: $(cat "$log")"
-holds "$heard" '"rules":false' || fail "a session not connected carries the rules"
 
-says "/blixel:connect tomorrow" "Usage: /blixel:connect [ask|direct]"
-[ ! -s "$log" ] || fail "a bad approval ran: $(cat "$log")"
+says "/blixel:connect direct" "Usage: /blixel:connect"
+[ ! -s "$log" ] || fail "a connect with words after it ran: $(cat "$log")"
 
-echo '{"data":{"meeting_id":"m-1","session":{}}}' >"$dir/status"
 says "/blixel:status" "not connected to the Blixel meeting"
-logged "agent status pid=$pi key=$key provider=pi name=pi" || fail "status: wrong session: $(cat "$log")"
-rm "$dir/status"
+logged "agent status session=$key parent=$pi" || fail "status: wrong session: $(cat "$log")"
 
-# Connect
+# Connect, then receive, with no model
 
 : >"$log"
-says "/blixel:connect direct" "Connected to the Blixel meeting"
-logged "agent relay --submit $root/pi/submit.sh pid=$pi key=$key provider=pi name=pi" || fail "relay: $(cat "$log")"
-logged "agent connect --approval direct pid=$pi key=$key provider=pi name=pi" || fail "connect: $(cat "$log")"
+says "/blixel:connect" "Connected to the Blixel meeting. Handoffs from people in it will arrive in this conversation."
+logged "agent connect session=$key parent=$pi" || fail "connect: $(cat "$log")"
+logged "agent receive --deliver-with $root/pi/submit.sh session=$key parent=$pi" || fail "receive: $(cat "$log")"
+[ "$(cut -d ' ' -f 2 "$log" | tr '\n' ' ')" = "connect receive " ] || fail "connect did not come before receive: $(cat "$log")"
+never "connect" "--approval"
+alive || fail "connect left no receiver running"
+says "/blixel:status" "Connected to the Blixel meeting. Handoffs from people in it arrive in this conversation."
 
 # A handoff runs as a prompt, exact, and whatever it says, only as a prompt
 
@@ -200,11 +304,12 @@ Second line, after a break.
 
   -dash "quoted" $HOME `tick` é✦'
 handoff "$text"
-logged "submit exit=0" || fail "a handoff pi took was not queued: $(cat "$log")"
+logged "submit exit=0" || fail "a handoff pi took was not delivered: $(cat "$log")"
 waits_for holds "$heard" '"source":"extension"' || fail "the handoff is no prompt"
 [ "$(cat "$dir/last-input")" = "$text" ] || fail "the handoff changed on the way: $(cat "$dir/last-input")"
 
 : >"$dir/out"
+: >"$log"
 for said in "disconnect blixel" "/blixel:disconnect" "BLIXEL STATUS"; do
 	handoff "$said"
 	waits_for holds "$heard" "{\"input\":\"$said\",\"source\":\"extension\"}" || fail "$said: not a prompt"
@@ -212,9 +317,7 @@ done
 never "a handoff saying a phrase" "agent disconnect"
 never "a handoff saying a phrase" "agent status"
 if holds "$dir/out" '"method":"notify"'; then fail "a handoff saying a phrase was answered"; fi
-alive || fail "a handoff saying a phrase stopped the relay"
-
-waits_for holds "$heard" '"rules":true' || fail "the rules did not reach a connected session"
+alive || fail "a handoff saying a phrase stopped the receiver"
 
 : >"$dir/hold"
 : >"$dir/out"
@@ -231,93 +334,186 @@ waits_for holds "$dir/out" '"type":"agent_settled"' || fail "the turn did not en
 : >"$log"
 says "Blixel Status" "Blixel"
 logged "agent status" || fail "phrase in capitals ran no status"
-says "BLIXEL:CONNECT ask" "Connected to the Blixel meeting"
-logged "agent connect --approval ask" || fail "phrase with an approval: $(cat "$log")"
-[ "$(grep -c 'agent relay' "$log")" = 0 ] || fail "connecting again started a second relay"
+says "BLIXEL:CONNECT" "Connected to the Blixel meeting"
+logged "agent connect" || fail "phrase in capitals ran no connect: $(cat "$log")"
+[ "$(count 'agent receive')" = 0 ] || fail "connecting again started a second receiver"
 
 : >"$log"
-for words in "connect blixel please" "please connect blixel" "disconnect blixel ask" "blixel status direct"; do
+for words in "connect blixel please" "please connect blixel" "connect blixel ask" "blixel connect direct"; do
 	reaches_pi "$words"
 done
 [ ! -s "$log" ] || fail "words beside a phrase ran: $(cat "$log")"
 
-# Disconnect stops everything
+# A receiver that stops with no word starts again, with no connect
 
-: >"$heard"
-says "disconnect blixel" "Disconnected from the Blixel meeting"
-waits_for gone || fail "disconnect left the relay running"
-[ ! -e "$(cat "$dir/socket")" ] || fail "disconnect left the socket"
-reaches_pi "after disconnecting"
-if holds "$heard" '"rules":true'; then fail "the rules outlived the connection"; fi
+: >"$log"
+kill -9 "$(cat "$dir/receiver")"
+receives_again "a killed receiver"
+handoff "after a restart"
+logged "submit exit=0" || fail "a handoff after a restart was not delivered"
 
-# A connect that fails leaves nothing
+: >"$log"
+stops "error cancelled 143"
+receives_again "a cancelled receiver"
 
-echo '{"error":{"message":"Blixel is not in a meeting","hint":"Join a room first."}}' >"$dir/connect"
-says "connect blixel" "Blixel did not connect: Blixel is not in a meeting Join a room first."
-waits_for gone || fail "a failed connect left the relay running"
-says "connect blixel" "Blixel did not connect"
-rm "$dir/connect"
-says "connect blixel" "Connected to the Blixel meeting"
-sleep 0.2
-alive || fail "the relay a failed connect stopped took its successor along"
-says "disconnect blixel" "Disconnected from the Blixel meeting"
+# A receiver that stops with a word stays stopped
 
-# Another session taking over ends the relay, and quitting then has nothing to end
+: >"$log"
+: >"$dir/out"
+stops "error app_unavailable 5"
+waits_for holds "$dir/out" "Blixel stopped receiving handoffs: It stopped Try again." ||
+	fail "a failed receiver said nothing: $(grep -aF '"notify"' "$dir/out")"
+stays_stopped "a receiver that failed"
+says "/blixel:status" "Connected to the Blixel meeting, but not receiving its handoffs. Type /blixel:connect to receive them."
+says "connect blixel" "Connected to the Blixel meeting. Handoffs from people in it will arrive"
+alive || fail "connecting again started no receiver"
+
+: >"$log"
+stops "ended meeting_ended"
+stays_stopped "a receiver whose meeting ended"
 
 says "connect blixel" "Connected to the Blixel meeting"
 : >"$log"
-: >"$dir/end-relay"
-waits_for gone || fail "the relay did not end"
-reaches_pi "taken over"
-sleep 0.1
+rm "$dir/connection"
+kill -9 "$(cat "$dir/receiver")"
+waits_for logged "agent receive" || fail "no receive after a kill"
+: >"$log"
+stays_stopped "a receiver refused not_connected"
 
+# Another receiver holds the session
+
+says "connect blixel" "Connected to the Blixel meeting"
+kill -9 "$(cat "$dir/receiver")"
+sleep 30 &
+echo "$!" >"$dir/receiver"
+other=$!
+: >"$log"
+waits_for logged "agent receive" || fail "no receive after a kill"
+: >"$log"
+sleep 1.3
+never "a receiver beside another" "agent receive"
+says "connect blixel" "Connected to the Blixel meeting. Another receiver in this session takes its handoffs."
+kill "$other"
+wait "$other" 2>/dev/null
+rm -f "$dir/receiver"
+
+# Disconnect stops everything
+
+says "connect blixel" "Connected to the Blixel meeting"
+: >"$log"
+says "disconnect blixel" "Disconnected from the Blixel meeting"
+waits_for gone || fail "disconnect left the receiver running"
+[ ! -e "$(cat "$dir/socket")" ] || fail "disconnect left the socket"
+stays_stopped "a disconnected session"
+says "connect blixel" "Connected to the Blixel meeting"
+says "disconnect blixel" "Disconnected from the Blixel meeting"
+says "connect blixel" "Connected to the Blixel meeting. Handoffs from people in it will arrive in this conversation."
+alive || fail "connecting again at once after a disconnect started no receiver"
+says "disconnect blixel" "Disconnected from the Blixel meeting"
+waits_for gone || fail "disconnect left the receiver running"
+
+# A connect that fails leaves nothing
+
+echo '{"error":{"code":"not_in_meeting","message":"Blixel is not in a meeting","hint":"Join a room first."}}' >"$dir/connect"
+: >"$log"
+says "connect blixel" "Blixel did not connect: Blixel is not in a meeting Join a room first."
+never "a failed connect" "agent receive"
+rm "$dir/connect"
+
+# Another session taking over ends the receiver, and quitting then has nothing to end
+
+says "connect blixel" "Connected to the Blixel meeting"
+: >"$log"
+echo other >"$dir/connection"
+waits_for gone || fail "the receiver did not end"
+stays_stopped "a replaced session"
 stop_pi
-never "a session its relay left" "agent disconnect"
+never "a session another one replaced" "agent disconnect"
+rm "$dir/connection"
 
-# Quitting ends the connection
+# A reload receives again, with no connect
 
 start_pi
 says "/blixel:connect" "Connected to the Blixel meeting"
 : >"$log"
+: >"$dir/out"
+rpc '{"type":"prompt","message":"/test-reload"}'
+waits_for logged "receive stopped" || fail "the reload left the old receiver running"
+receives_again "a reload"
+never "a reload" "agent disconnect"
+handoff "after a reload"
+waits_for holds "$heard" '{"input":"after a reload","source":"extension"' || fail "a handoff after a reload never reached pi"
+
+# Quitting ends the connection
+
+: >"$log"
 stop_pi
-logged "agent disconnect pid=$pi key=$key" || fail "quitting did not disconnect: $(cat "$log")"
-logged "relay stopped" || fail "quitting left the relay running"
+logged "agent disconnect session=$key" || fail "quitting did not disconnect: $(cat "$log")"
+waits_for logged "receive stopped" || fail "quitting left the receiver running"
 [ ! -e "$(cat "$dir/socket")" ] || fail "quitting left the socket"
 
 # The model does all of it by itself, in a session nothing else has touched
 
 model_runs() { # a command for the model's bash tool
 	: >"$dir/out"
+	: >"$heard"
 	printf '%s' "$1" >"$dir/model-runs"
 	rpc "{\"type\":\"prompt\",\"message\":\"do it\"}"
 	waits_for holds "$dir/out" '"type":"tool_execution_end"' || fail "the model ran nothing: $1"
 	waits_for holds "$dir/out" '"type":"agent_end"' || fail "no run ended: $1"
 }
+model_read() { holds "$dir/model-read" "$1"; }
 
 : >"$log"
 start_pi
 model_runs 'grep "blixel agent connect" /dev/null'
-never "a mention of connect" "agent relay"
+[ ! -s "$log" ] || fail "a mention of connect ran: $(cat "$log")"
 
-model_runs "\"$dir/bin/blixel\" agent status"
-logged "agent status pid=$pi key=$key provider=pi name=pi" || fail "the model's status: wrong session: $(cat "$log")"
-model_runs "\"$dir/bin/blixel\" agent connect"
-logged "agent connect pid=$pi key=$key provider=pi name=pi" || fail "the model's connect: wrong session: $(cat "$log")"
-logged "agent relay --submit $root/pi/submit.sh pid=$pi key=$key provider=pi name=pi" ||
-	fail "the model's connect started no relay: $(cat "$log")"
-waits_for alive || fail "the model's connect left no relay running"
+model_runs "\"$cli\" agent status"
+logged "agent status session=$key" || fail "the model's status: wrong session: $(cat "$log")"
+
+: >"$dir/gate-blocks"
 : >"$log"
-model_runs "\"$dir/bin/blixel\" agent connect"
-[ "$(grep -c 'agent relay' "$log")" = 0 ] || fail "the model's second connect started a second relay"
+model_runs "\"$cli\" agent connect"
+rm "$dir/gate-blocks"
+[ ! -s "$log" ] || fail "a connect a permission gate blocked ran: $(cat "$log")"
+model_read "Blocked by user" || fail "the model did not read the gate's answer"
+[ ! -e "$dir/connection" ] || fail "a connect a permission gate blocked connected"
+
+: >"$log"
+model_runs "env -u PI_SESSION_ID OTHER=o-1 \"$cli\" agent connect --session-env OTHER"
+logged "agent connect --session-env OTHER session=o-1" || fail "the model's connect for another session did not run: $(cat "$log")"
+never "a connect for another session" "agent receive"
+[ "$(count 'agent connect')" = 1 ] || fail "a connect for another session connected this one: $(cat "$log")"
+model_read '"connection_id":"c-o-1"' || fail "the model did not read its own connect's answer"
+rm "$dir/connection"
+
+echo '{"error":{"code":"not_in_meeting","message":"Blixel is not in a meeting"}}' >"$dir/connect"
+: >"$log"
+model_runs "\"$cli\" agent connect"
+rm "$dir/connect"
+never "a connect that failed" "agent receive"
+
+: >"$log"
+model_runs "\"$cli\" agent connect"
+logged "agent connect session=$key" || fail "the model's connect: wrong session: $(cat "$log")"
+logged "agent receive --deliver-with $root/pi/submit.sh session=$key parent=$pi" ||
+	fail "the model's connect was not taken over: $(cat "$log")"
+model_read '"receiving":true' || fail "the model read no receiving: $(cat "$dir/model-read")"
+alive || fail "the model's connect left no receiver running"
+: >"$log"
+model_runs "\"$cli\" agent connect"
+[ "$(count 'agent receive')" = 0 ] || fail "the model's second connect started a second receiver"
 handoff "after the model connected"
 logged "submit exit=0" || fail "a handoff did not reach pi after the model connected"
-model_runs "\"$dir/bin/blixel\" agent disconnect"
-logged "agent disconnect pid=$pi key=$key" || fail "the model's disconnect: wrong session: $(cat "$log")"
-: >"$dir/end-relay"
-waits_for gone || fail "the relay outlived the model's disconnect"
+: >"$log"
+model_runs "\"$cli\" agent disconnect"
+logged "agent disconnect session=$key" || fail "the model's disconnect: wrong session: $(cat "$log")"
+waits_for gone || fail "the receiver outlived the model's disconnect"
+stays_stopped "after the model's disconnect"
 stop_pi
 
-# Nobody to take a handoff: that is doubt, never queued
+# Nobody to take a handoff: that is doubt, never delivered
 
 BLIXEL_PI_SOCKET=$dir/nobody "$root/pi/submit.sh" "text" 2>/dev/null
 [ "$?" = 1 ] || fail "a submit with nothing listening must answer 1"
