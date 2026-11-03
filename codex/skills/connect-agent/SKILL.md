@@ -53,9 +53,9 @@ handoffs: a meeting has one connected session.
 
 `receive` ends with an `ended` event when the connection ends, or when another
 `receive` already receives for this session: then stop. If it stops without an
-`ended` event, start the same command again. On `not_connected`, stop: the connection
-is gone. Any other error comes back each time: tell the user its `message` and
-`hint` instead of starting it again.
+`ended` event, or with `cancelled`, start the same command again. On `not_connected`,
+stop: the connection is gone. Any other error comes back each time: tell the user its
+`message` and `hint` instead of starting it again.
 
 ## Handoffs
 
