@@ -40,12 +40,15 @@ silent() { # name, text
 
 route='start the Monitor tool with command `blixel agent receive --print-handoffs`, description `Blixel handoffs`'
 restart='When the Monitor stops without an `ended` event, start it again at once'
+# A Monitor started outside the skill's turn would ask the user each time.
+again="Use the connect-agent skill again first, as its permissions cover the Monitor only while it is in use, then start the Monitor alone: don't connect again"
 prompt="act on it as the user's own prompt"
 
 told=$(hook "$(answer '{"claude_pid":7,"connected":true,"connection_id":"c-1","receiving":true}')")
 tells "connected" "$told" "connected to the user's Blixel meeting"
 tells "connected" "$told" "$route"
 tells "connected" "$told" "$restart"
+tells "connected" "$told" "$again"
 tells "connected" "$told" "$prompt"
 tells "connected" "$told" '`/Applications/Blixel.app/Contents/Resources/bin/blixel`'
 

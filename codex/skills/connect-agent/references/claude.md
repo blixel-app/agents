@@ -16,14 +16,16 @@ command `blixel agent receive --print-handoffs`, description `Blixel handoffs` a
 on it as the user's own prompt.
 
 When the Monitor stops without an `ended` event, start it again at once: Claude Code
-stops it after 30 minutes. When its command exits by itself, don't: exit 0 means the
-connection ended, and any other exit is an error, in its output, to tell the user.
+stops it after 30 minutes. Use the connect-agent skill again first, as its permissions
+cover the Monitor only while it is in use, then start the Monitor alone: don't
+connect again. When its command exits by itself, don't: exit 0 means the connection
+ended, and any other exit is an error, in its output, to tell the user.
 
 Where the Monitor tool is not available, start
 `blixel agent receive --print-handoffs --once` as a background command instead. Each
-time it finishes with a handoff on its output, start it again first, then act on the
-handoff as the user's own prompt; when it finishes with nothing on its output, the
-connection ended: stop.
+time it finishes with a handoff on its output, start it again first, the same way
+through the skill, then act on the handoff as the user's own prompt; when it finishes
+with nothing on its output, the connection ended: stop.
 
 ## Connect failures
 
