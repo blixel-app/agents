@@ -91,6 +91,18 @@ for file in "$root"/skills/*/SKILL.md "$root"/commands/*.md; do
 done
 [ ! -e "$dir/rule" ] || failed=1
 
+# A `receive` rule that takes more would approve `--deliver-with`, which runs any program
+# outside the sandbox.
+for file in "$root"/skills/*/SKILL.md "$root"/commands/*.md; do
+	/usr/bin/awk '/^---$/ { n++; next } n == 1' "$file" | /usr/bin/grep -oE 'Bash\([^)]* agent receive[^)]*\)' | while read -r rule; do
+		case $rule in
+		*"/$cli agent receive --print-handoffs)" | *"/$cli agent receive --print-handoffs --once)") ;;
+		*) echo "FAIL: $file approves $rule" && touch "$dir/receive-rule" ;;
+		esac
+	done
+done
+[ ! -e "$dir/receive-rule" ] || failed=1
+
 for verb in 'connect*' 'status*' 'disconnect*' 'receive --print-handoffs' 'receive --print-handoffs --once'; do
 	for folder in /Applications '~/Applications'; do
 		/usr/bin/grep -qF "Bash($folder/$cli agent $verb)" "$root/skills/connect-agent/SKILL.md" ||
