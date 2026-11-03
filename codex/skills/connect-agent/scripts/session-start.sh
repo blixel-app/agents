@@ -14,5 +14,5 @@ status=$("${0%/*}/blixel" agent status 2>/dev/null) || exit 0
 # Parsed, not matched: the session's other keys change between app versions,
 # and its ended connection holds a connection_id of its own.
 printf '%s' "$status" | plutil -extract data.session.connection_id raw -o - - >/dev/null 2>&1 || exit 0
-echo "This Claude Code session is connected to the user's Blixel meeting, and a \"Blixel handoffs\" Monitor receives its handoffs: the user connected it with the Blixel connect-agent skill before this conversation was cleared or compacted."
+echo "This Claude Code session is connected to the user's Blixel meeting, and \`blixel agent receive --print-handoffs\` receives its handoffs in the background: the user connected it with the Blixel connect-agent skill before this conversation was cleared or compacted."
 cat "${0%/*}/../references/claude.md"
