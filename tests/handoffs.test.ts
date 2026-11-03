@@ -609,7 +609,7 @@ for (const command of [
   })
 }
 
-test('a model-run disconnect ends the receiver, and says nothing', async ($, on) => {
+test('a model-run disconnect ends the receiver, and says the session was disconnected', async ($, on) => {
   const stub = stage(on)
   bash(on, stub)
 
@@ -625,6 +625,8 @@ test('a model-run disconnect ends the receiver, and says nothing', async ($, on)
   expect(stub.running()).toBe(0)
   expect(stub.receivers).toHaveLength(1)
   expect(stub.status()).toBeUndefined()
+  expect(stub.toasts).toHaveLength(1)
+  expect(stub.toasts[0]).toMatch(/^Blixel disconnected this session/)
 })
 
 for (const command of [
