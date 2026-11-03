@@ -13,7 +13,7 @@ type Answer =
 type Session = {
   ready: () => Promise<boolean>
   connect: () => Promise<string>
-  takeOver: () => Promise<string | undefined>
+  takeOver: (id: unknown) => Promise<string | undefined>
   disconnect: () => Promise<string>
   status: () => Promise<string>
   deliver: () => Promise<void>
@@ -503,12 +503,16 @@ export const register: Register = on => {
       },
 
       // The model's own connect already ran, approved; this receives for it
-      // and answers as connect does once something receives.
-      takeOver: async () => {
+      // and answers as connect does once something receives. Only for this
+      // session's connection: the connect below would otherwise make one the
+      // approval never covered, as for `--session-env` or over ssh.
+      takeOver: async (id: unknown) => {
         if (!(await ready())) return undefined
         connecting += 1
         try {
           since = Math.max(since, queue.next)
+          const mine = await refresh()
+          if (mine.error || typeof id !== 'string' || mine.data.session?.connection_id !== id) return undefined
           connected = true
           await receiving()
           const answer = await connectOnce()
@@ -779,8 +783,9 @@ export const register: Register = on => {
     if (!command || !session || ran.deny || ran.isError) return ran
     if (command === 'connect') {
       const stdout = typeof ran.result?.stdout === 'string' ? ran.result.stdout : ''
-      if (jsonLines(stdout).at(-1)?.data?.outcome === 'connected') {
-        const answer = await session.takeOver()
+      const answered = jsonLines(stdout).at(-1)?.data
+      if (answered?.outcome === 'connected') {
+        const answer = await session.takeOver(answered.connection?.connection_id)
         if (answer !== undefined) return { result: { ...ran.result, stdout: answer } }
         return ran
       }

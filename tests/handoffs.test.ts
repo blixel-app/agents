@@ -585,6 +585,30 @@ test('a model-run connect that failed is left as the model read it', async ($, o
   expect((ran.result as { stderr?: string }).stderr).toContain('not_in_meeting')
 })
 
+for (const command of [
+  '/Applications/Blixel.app/Contents/Resources/bin/blixel agent connect --session-env KIMI_SESSION_ID',
+  'ssh studio /Applications/Blixel.app/Contents/Resources/bin/blixel agent connect',
+]) {
+  test(`\`${command}\` connected another session, so this one is not connected for it`, async ($, on) => {
+    const stub = stage(on)
+    const elsewhere = connected(false, {
+      connection: { connection_id: 'c-9', meeting_id: 'm-1', provider: 'agent', receiving: false, state: 'connected' },
+    })
+    on('tool.call', () => ({ result: { stdout: elsewhere, stderr: '', interrupted: false } }))
+
+    await start($)
+    const ran = await settled(stub, $.tool.call({ tool: 'Bash', command }))
+    await stub.settle()
+    await stub.clock.advance(60_000)
+    await stub.settle()
+
+    expect(stub.isConnected()).toBe(false)
+    expect(stub.timeline).not.toContain('connect')
+    expect(stub.receivers).toEqual([])
+    expect((ran.result as { stdout?: string }).stdout).toBe(elsewhere)
+  })
+}
+
 test('a model-run disconnect ends the receiver, and says nothing', async ($, on) => {
   const stub = stage(on)
   bash(on, stub)
