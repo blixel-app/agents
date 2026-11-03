@@ -1,29 +1,26 @@
 # OpenCode
 
-The Blixel plugin delivers each handoff into this session as a prompt, the way the user
-typing one would: it starts a turn, or joins the turn in progress at its next step. The
-user typing `/blixel:connect [ask|direct]`, `/blixel:status` or `/blixel:disconnect`
-gets the answer as a notice in the conversation with no model turn, and in OpenCode's
-terminal so does `connect blixel`, `blixel status` or `disconnect blixel` as a whole
-prompt; this file is for every other way of asking.
+`blixel` here always means
+`/Applications/Blixel.app/Contents/Resources/bin/blixel`, by that full path, or that path
+under `~/Applications` if Blixel is there. Run every `blixel agent` command with the
+shell tool: OpenCode sets `OPENCODE_SESSION_ID` there, which names this session.
 
-Run `blixel agent connect`, `status` and `disconnect` with the shell tool, by the skill's
-full path. The plugin sees each one and makes it this session's, and starts following
-the call for a connect.
+## Receiving
 
-## Connect failures
+After `blixel agent connect` answers `"receiving": false`, start
+`blixel agent receive --deliver-with <this skill's folder>/scripts/deliver/opencode.sh`,
+both by their full paths, with the shell tool and `background: true`. It keeps
+running, and prompts each handoff into this session through OpenCode's server, the
+way the user typing it would.
 
-- `monitor_not_running`: the plugin's relay did not attach. Blixel 0.16.0 or later has
-  it: ask the user to update Blixel, then connect again.
-- `not_in_agent_session`: the command did not run through the shell tool, or the Blixel
-  plugin is not installed. Ask the user to run
-  `opencode plugin add 'git+https://github.com/blixel-app/skills.git'`, which needs
-  OpenCode 2 or later.
-- Anything else: as the skill says.
+OpenCode resumes you when it ends: after an `ended` event, do nothing; otherwise
+start it again.
+
+A session started with `opencode --standalone` has no server to prompt: it needs the
+Blixel plugin, `opencode plugin add 'git+https://github.com/blixel-app/skills.git'`.
 
 ## Status and disconnect
 
-The connection belongs to the session on OpenCode's server, not to a terminal: after the
-terminal closes, a handoff still runs there, so disconnect first. Stopping the server
-ends the connection: connect again. Each session has its own connection, and connecting
-another replaces it.
+The connection belongs to the session on OpenCode's server, not to a terminal: after
+the terminal closes, a handoff still runs there, so disconnect first. Stopping the
+server ends the receiving: connect again.

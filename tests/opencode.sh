@@ -76,7 +76,7 @@ const server = http.createServer((request, response) => {
 		// A title has no tools: only a turn of the conversation counts.
 		if (parsed.tools) {
 			fs.writeFileSync("$dir/last-input", String(last.content));
-			hear({ sent: JSON.stringify(last), rules: body.includes("suggestion from someone in the call"), skill: body.includes("connect-agent") });
+			hear({ sent: JSON.stringify(last), rules: body.includes("they connected it to receive handoffs"), skill: body.includes("connect-agent") });
 			if (fs.existsSync("$dir/hold")) hear({ held: true });
 			while (fs.existsSync("$dir/hold")) await new Promise((wake) => setTimeout(wake, 20));
 		}

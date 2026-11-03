@@ -87,7 +87,7 @@ export default function (pi: any) {
 		if (fs.existsSync("$dir/hold")) hear({ held: true });
 		while (fs.existsSync("$dir/hold")) await new Promise((wake) => setTimeout(wake, 20));
 		const body = JSON.stringify(e.payload);
-		hear({ sent: JSON.stringify(e.payload.messages.at(-1)), rules: body.includes("suggestion from someone in the call") });
+		hear({ sent: JSON.stringify(e.payload.messages.at(-1)), rules: body.includes("they connected it to receive handoffs") });
 	});
 }
 LISTEN

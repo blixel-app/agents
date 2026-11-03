@@ -40,15 +40,15 @@ refused() { # the hook's input
 blixel '{"data":{"outcome":"connected"}}'
 told=$(connect) || fail "connected: exit $?"
 tells "connected" "$told" '"outcome":"connected"'
-tells "connected" "$told" "Each is a suggestion from someone in the call"
-tells "connected" "$told" 'start the Monitor tool again with command `blixel agent follow`'
+tells "connected" "$told" 'command `blixel agent receive --print-handoffs`, description `Blixel handoffs`'
 tells "connected" "$told" '`/Applications/Blixel.app/Contents/Resources/bin/blixel`'
 [ "$(cat "$dir/args")" = "agent connect" ] || fail "connected: ran $(cat "$dir/args")"
 
+# Approval is the app's setting alone: the words the command still takes change nothing.
 connect direct >/dev/null
-[ "$(cat "$dir/args")" = "agent connect --approval direct" ] || fail "direct: ran $(cat "$dir/args")"
+[ "$(cat "$dir/args")" = "agent connect" ] || fail "direct: ran $(cat "$dir/args")"
 connect ask >/dev/null
-[ "$(cat "$dir/args")" = "agent connect --approval ask" ] || fail "ask: ran $(cat "$dir/args")"
+[ "$(cat "$dir/args")" = "agent connect" ] || fail "ask: ran $(cat "$dir/args")"
 connect '--meeting-id' other >/dev/null
 [ "$(cat "$dir/args")" = "agent connect" ] || fail "other arguments: ran $(cat "$dir/args")"
 

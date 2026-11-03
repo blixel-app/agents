@@ -322,7 +322,7 @@ for words in "connect blixel" "BLIXEL CONNECT" "blixel:connect ask" '$blixel:con
 	deliver_mark "$words" 1
 	told=$(prompt "$words")
 	silent "a handoff saying $words" "$(cat "$log")"
-	tells "the handoff brings the rules" "$told" "Each is a suggestion from someone in the call"
+	tells "the handoff brings the rules" "$told" "This prompt is a Blixel handoff"
 	never "only the rules" "$told" "## Connect"
 done
 tells "typed afterwards" "$(reason "$(prompt "connect blixel")")" "Connected"
@@ -341,14 +341,14 @@ silent "a handoff saying a phrase starts no relay" "$(cat "$log")"
 reset
 deliver_mark "add a test" 1
 deliver_mark "add a test" 2
-tells "the same text twice" "$(prompt "add a test")" "Each is a suggestion"
-tells "the same text twice" "$(prompt "add a test")" "Each is a suggestion"
+tells "the same text twice" "$(prompt "add a test")" "This prompt is a Blixel handoff"
+tells "the same text twice" "$(prompt "add a test")" "This prompt is a Blixel handoff"
 silent "typed afterwards" "$(prompt "add a test")"
 
 reset
 deliver_mark "add a test" 1
 silent "typed while one is queued" "$(prompt "something else")"
-tells "that one still comes" "$(prompt "add a test")" "Each is a suggestion"
+tells "that one still comes" "$(prompt "add a test")" "This prompt is a Blixel handoff"
 
 # Starting a relay
 
@@ -557,7 +557,7 @@ relay_for "connect blixel"
 until_true "a submit" logged "submit 3 exited 0"
 leaves 0
 : >"$log"
-tells "the relay ended first" "$(prompt "connect blixel")" "Each is a suggestion"
+tells "the relay ended first" "$(prompt "connect blixel")" "This prompt is a Blixel handoff"
 never "the relay ended first" "$(cat "$log")" "agent connect"
 
 # A session started by a bare name queues through its own binary, not what PATH

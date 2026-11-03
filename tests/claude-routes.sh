@@ -6,9 +6,10 @@ root=$(cd "$(dirname "$0")/.." && pwd -P)
 scripts=$root/skills/connect-agent/scripts
 manifest=$root/.claude-plugin/plugin.json
 dir=$(mktemp -d)
-perl -e 'sleep 600' 'agent follow' &
-follower=$!
-trap 'kill "$follower"; wait "$follower" 2>/dev/null; rm -rf "$dir"' EXIT
+# A Monitor's receiver under this shell, so the SessionStart hook goes on to ask the app.
+perl -e 'sleep 600' 'agent receive --print-handoffs' &
+receiver=$!
+trap 'kill "$receiver"; wait "$receiver" 2>/dev/null; rm -rf "$dir"' EXIT
 failed=0
 
 fail() { echo "FAIL: $1"; failed=1; }
@@ -64,8 +65,8 @@ done <"$dir/commands"
 path=$(env -u BLIXEL_HOOK_PATH /bin/sh -c '. "$1/path.sh"; echo "$PATH"' sh "$scripts")
 [ "$path" = /usr/bin:/bin:/usr/sbin:/sbin ] || fail "PATH without the setting: $path"
 
-# The mod stops its follower by the pid it started.
-SLEEPS=30 "$scripts/app-cli" agent follow &
+# The mod stops its receiver by the pid it started.
+SLEEPS=30 "$scripts/app-cli" agent receive --print-events --confirm-each &
 started=$!
 i=0
 while [ ! -s "$dir/ran" ] && [ "$i" -lt 500 ]; do
@@ -90,7 +91,7 @@ for file in "$root"/skills/*/SKILL.md "$root"/commands/*.md; do
 done
 [ ! -e "$dir/rule" ] || failed=1
 
-for verb in 'connect*' 'status*' 'disconnect*' follow; do
+for verb in 'connect*' 'status*' 'disconnect*' 'receive --print-handoffs' 'receive --print-handoffs --once'; do
 	for folder in /Applications '~/Applications'; do
 		/usr/bin/grep -qF "Bash($folder/$cli agent $verb)" "$root/skills/connect-agent/SKILL.md" ||
 			fail "the skill has no rule for $folder $verb"
@@ -98,8 +99,9 @@ for verb in 'connect*' 'status*' 'disconnect*' follow; do
 done
 
 # What the model is told to run. Skill text, as a rule cannot stop what it asks for.
-for file in "$root"/skills/connect-agent/SKILL.md "$root"/skills/connect-agent/references/claude-code.md; do
-	/usr/bin/grep -qF "/Applications/$cli\`, by that full path" "$file" || fail "$file does not give the full path"
+for file in "$root"/skills/connect-agent/SKILL.md "$root"/skills/connect-agent/references/*.md; do
+	/usr/bin/grep -q 'blixel agent' "$file" && ! /usr/bin/grep -qF "/Applications/$cli\`, by that full path" "$file" &&
+		fail "$file does not give the full path"
 	/usr/bin/grep -n 'run `*scripts/blixel\|use `*scripts/blixel' "$file" >"$dir/shim" &&
 		fail "$file sends the model to the shim: $(cat "$dir/shim")"
 done
