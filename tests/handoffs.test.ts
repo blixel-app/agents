@@ -488,6 +488,24 @@ for (const how of ['killed', 'cancelled'] as const) {
   })
 }
 
+test('a killed receiver that comes back to another receiver leaves the session to it, still connected', async ($, on) => {
+  const setup: { otherReceiver?: boolean } = {}
+  const stub = stage(on, setup)
+
+  await connectSession($, stub)
+  stub.kill()
+  // A Monitor the model started while nothing received.
+  setup.otherReceiver = true
+  await stub.settle()
+  await stub.clock.advance(120_000)
+  await stub.settle()
+
+  expect(stub.running()).toBe(0)
+  expect(stub.receivers).toHaveLength(2)
+  expect(stub.toasts).toEqual([])
+  expect(stub.status()).toBe('✦ connected · handoffs go to another receiver')
+})
+
 test('a handoff waiting when its connection ends still runs after the next turn', async ($, on) => {
   let isBusy = true
   const stub = stage(on, {
