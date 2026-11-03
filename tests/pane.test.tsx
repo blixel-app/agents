@@ -1,6 +1,6 @@
 import { expect, test } from 'claude-code/testing'
 
-import { complete, connectSession, current, PID, printed, run, seedPanel, stage, start, STARTED, status } from './support'
+import { bash, complete, connected, connectSession, current, PID, printed, run, seedPanel, stage, start, settled, STARTED, status } from './support'
 
 const SURFACES = ['terminal', 'desktop'] as const
 const LONG = Array.from({ length: 80 }, (_, i) => `word${i}`).join(' ')
@@ -33,18 +33,18 @@ const connectedCli = () => {
       if (command === 'current') return { exitCode: 0, stdout: current('connected', this.room, this.meeting) }
       if (command === 'disconnect') isConnected = false
       if (command === 'connect') isConnected = true
-      if (command === 'disconnect' || command === 'connect') {
-        return { exitCode: 0, stdout: JSON.stringify({ data: { outcome: isConnected ? 'connected' : 'disconnected' } }) }
-      }
+      if (command === 'connect') return { exitCode: 0, stdout: connected(false, { meeting_id: this.meeting }) }
+      if (command === 'disconnect') return { exitCode: 0, stdout: JSON.stringify({ data: { outcome: 'disconnected' } }) }
+      if (command !== 'status') return undefined
       return {
         exitCode: 0,
         stdout: isConnected
           ? status(
-              { connection_id: 'c-1', follower_attached: true },
+              { connection_id: 'c-1', connected: true, receiving: true },
               { meeting_id: this.meeting, approval_mode: 'ask' },
               this.meeting,
             )
-          : status({ follower_attached: true }, null, this.meeting),
+          : status({ connected: false }, null, this.meeting),
       }
     },
   }
@@ -64,7 +64,7 @@ test('/blixel:connect opens the pane in the desktop app', async ($, on) => {
   const desktop = stage(on, { cli: command => cli.answer(command), surfaces: ['desktop'] })
 
   await start($)
-  await run($, 'blixel:connect')
+  await settled(desktop, run($, 'blixel:connect'))
 
   expect(desktop.panes).toEqual(['blixel'])
 })
@@ -74,7 +74,7 @@ test('/blixel:connect leaves the terminal as it is', async ($, on) => {
   const terminal = stage(on, { cli: command => cli.answer(command), surfaces: ['terminal'] })
 
   await connectSession($, terminal)
-  await run($, 'blixel:connect')
+  await settled(terminal, run($, 'blixel:connect'))
 
   expect(terminal.panes).toEqual([])
 })
@@ -86,15 +86,14 @@ test('the pane shows the connection and ends it, on every surface', async ($, on
   await connectSession($, stub)
 
   for (const surface of SURFACES) {
-    await run($, 'blixel:connect')
+    await settled(stub, run($, 'blixel:connect'))
     await stub.settle()
     const ui = await $.ui.mount(pane(surface))
     expect(await ui.find({ type: 'Text', text: /Connected to Design sync/ })).toBeDefined()
     expect(await ui.find({ type: 'Text', text: /asks you before each handoff/ })).toBeDefined()
     expect((await ui.find({ key: 'connection' }))?.props.label).toBe('Disconnect')
 
-    await ui.press({ key: 'connection' })
-    await stub.settle()
+    await settled(stub, ui.press({ key: 'connection' }))
     expect(cli.calls).toContain('disconnect')
     expect(await ui.find({ type: 'Text', text: /In Design sync/ })).toBeDefined()
     expect((await ui.find({ key: 'connection' }))?.props.label).toBe('Connect')
@@ -123,14 +122,13 @@ for (const surface of SURFACES) {
   test(`the ${surface} pane connects a session nothing has run in`, async ($, on) => {
     const cli = connectedCli()
     cli.answer('disconnect')
-    const stub = stage(on, { cli: command => cli.answer(command), isLive: true })
+    const stub = stage(on, { cli: command => cli.answer(command) })
 
     await start($)
     await stub.settle()
     const ui = await $.ui.mount(pane(surface))
     expect(await ui.find({ type: 'Text', text: /Not connected/ })).toBeDefined()
-    await ui.press({ key: 'connection' })
-    await stub.settle()
+    await settled(stub, ui.press({ key: 'connection' }))
 
     expect(await ui.find({ type: 'Text', text: /Connected to Design sync/ })).toBeDefined()
     expect(stub.running()).toBe(1)
@@ -183,7 +181,7 @@ test('a long handoff in the pane shows its opening until it is opened', async ($
 })
 
 test('each handoff in the pane names who sent it, on every surface', async ($, on) => {
-  const stub = stage(on, { printed: [printed('Rename the flag', 'Ana', 1), printed('Run the tests', 'Bea', 2)] })
+  const stub = stage(on, { printed: [printed('Rename the flag', 'Ana', '1'), printed('Run the tests', 'Bea', '2')] })
 
   await connectSession($, stub)
 
@@ -212,13 +210,13 @@ test("the pane lists one meeting's handoffs: a connection to another starts it e
   await stub.settle()
   expect(await listed()).toBe(true)
 
-  await run($, 'blixel:connect')
+  await settled(stub, run($, 'blixel:connect'))
   await stub.settle()
   expect(await listed()).toBe(true)
 
   cli.meeting = 'm-2'
   cli.room = 'Standup'
-  await run($, 'blixel:connect')
+  await settled(stub, run($, 'blixel:connect'))
   await stub.settle()
   expect(await listed()).toBe(false)
   const ui = await $.ui.mount(pane('terminal'))
@@ -230,7 +228,6 @@ test('a handoff from the new meeting that arrives before the connect is answered
   const cli = connectedCli()
   let isSlow = false
   const stub = stage(on, {
-    isLive: true,
     printed: [printed('Rename the flag')],
     cli: command => {
       const answer = cli.answer(command)
@@ -252,7 +249,7 @@ test('a handoff from the new meeting that arrives before the connect is answered
   isSlow = true
   const connecting = run($, 'blixel:connect')
   await stub.settle()
-  stub.print(printed('Run the tests', 'Bea', 2))
+  stub.print(printed('Run the tests', 'Bea', '2'))
   await stub.settle()
   await stub.clock.advance(1_000)
   await connecting
@@ -264,7 +261,7 @@ test('a handoff from the new meeting that arrives before the connect is answered
 
 test('a handoff from the meeting the session left is not listed once it connects to another, with no poll between', async ($, on) => {
   const cli = connectedCli()
-  const stub = stage(on, { isLive: true, cli: command => cli.answer(command) })
+  const stub = stage(on, { cli: command => cli.answer(command) })
   const listed = async () => {
     const ui = await $.ui.mount(pane('terminal'))
     const found = (await ui.find({ type: 'Text', text: /Rename the flag/ })) !== undefined
@@ -278,25 +275,22 @@ test('a handoff from the meeting the session left is not listed once it connects
   expect(await listed()).toBe(true)
 
   cli.meeting = 'm-2'
-  await run($, 'blixel:connect')
+  await settled(stub, run($, 'blixel:connect'))
   await stub.settle()
   expect(await listed()).toBe(false)
 })
 
 test("a handoff from the meeting the session left is not listed once the skill's Bash call connects it to another", async ($, on) => {
   const cli = connectedCli()
-  const stub = stage(on, { isLive: true, cli: command => cli.answer(command) })
-  on('tool.call', () => {
-    cli.answer('connect')
-    return { result: { stdout: '', stderr: '', interrupted: false } }
-  })
+  const stub = stage(on, { cli: command => cli.answer(command) })
+  bash(on, stub)
 
   await connectSession($, stub)
   stub.print(printed('Rename the flag'))
   await stub.settle()
 
   cli.meeting = 'm-2'
-  await $.tool.call({ tool: 'Bash', command: 'blixel agent connect' })
+  await settled(stub, $.tool.call({ tool: 'Bash', command: 'blixel agent connect' }))
   await stub.settle()
   const ui = await $.ui.mount(pane('terminal'))
   expect(await ui.find({ type: 'Text', text: /Rename the flag/ })).toBeUndefined()
@@ -319,7 +313,7 @@ test('a handoff whose sender has no name leads with its time, on every surface',
 
 test('after /clear empties $.state the pane shows the connection again within a second', async ($, on) => {
   const cli = connectedCli()
-  const stub = stage(on, { isLive: true, cli: command => cli.answer(command) })
+  const stub = stage(on, { cli: command => cli.answer(command) })
   // What the engine does to $.state on a /clear; a test cannot write it itself.
   let isCleared = false
   on('session.end', () => {
@@ -367,7 +361,7 @@ test('typed phrases connect, check and disconnect with no turn', async ($, on) =
   const stub = stage(on, { cli: command => cli.answer(command) })
   await start($)
 
-  expect(await typed($, 'Connect Blixel')).toEqual({ drop: expect.stringContaining('Connected to the Blixel') })
+  expect(await settled(stub, typed($, 'Connect Blixel'))).toEqual({ drop: expect.stringContaining('Connected to the Blixel') })
   await stub.settle()
   expect(await typed($, 'blixel status')).toEqual({ drop: expect.stringContaining('connected to the Blixel') })
   expect(await typed($, 'blixel:disconnect')).toEqual({ drop: expect.stringContaining('Disconnected from the') })
@@ -388,7 +382,7 @@ test('a typed phrase leaves the prompt box empty', async ($, on) => {
   on('prompt.read', () => ({ value: { text: 'connect blixel', cursor: 14 } }))
   await start($)
 
-  await typed($, 'connect blixel')
+  await settled(stub, typed($, 'connect blixel'))
   await stub.settle()
 
   await stub.clock.advance(100)
@@ -407,7 +401,7 @@ test('text typed while a phrase ran stays in the prompt box', async ($, on) => {
   on('prompt.read', () => ({ value: { text: 'connect blixelnext thought', cursor: 26 } }))
   await start($)
 
-  await typed($, 'connect blixel')
+  await settled(stub, typed($, 'connect blixel'))
   await stub.settle()
 
   await stub.clock.advance(100)
@@ -415,17 +409,17 @@ test('text typed while a phrase ran stays in the prompt box', async ($, on) => {
   expect(filled).toEqual([])
 })
 
-test('a typed connect takes ask or direct', async ($, on) => {
+test("a typed connect with ask or direct reaches the model: approval is the app's", async ($, on) => {
   const cli = connectedCli()
   const stub = stage(on, { cli: command => cli.answer(command) })
   await start($)
 
   await typed($, 'blixel connect direct')
+  await typed($, 'connect blixel ask')
   await stub.settle()
 
-  const connects = stub.runs.filter(one => one.argv.includes('connect'))
-  expect(connects.map(one => one.argv.slice(-2))).toContainEqual(['--approval', 'direct'])
-  expect(stub.submitted).toEqual([])
+  expect(stub.submitted).toEqual(['blixel connect direct', 'connect blixel ask'])
+  expect(cli.calls).not.toContain('connect')
 })
 
 test('a phrase inside a longer prompt reaches the model', async ($, on) => {

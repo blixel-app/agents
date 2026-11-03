@@ -2,7 +2,7 @@
 export type PanelHandoff = {
   n: number
   text: string
-  /** Who sent it, '' when the follower did not say. */
+  /** Who sent it, '' when the receiver did not say. */
   sender: string
   at: number
   state: 'waiting' | 'held' | 'delivered'
@@ -18,8 +18,13 @@ export type Panel = {
   room: string | null
   /** The meeting the listed handoffs came from. */
   meeting: string | null
+  /** The app's setting, read from the connection. */
   approval: 'ask' | 'direct' | null
-  isViaMonitor: boolean
+  /**
+   * What receives the connection's handoffs: this mod, another receiver in the
+   * session (a Monitor), or nothing.
+   */
+  receiver: 'mod' | 'other' | null
   handoffs: PanelHandoff[]
 }
 
