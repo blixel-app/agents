@@ -153,8 +153,9 @@ server.unref();
 export default function (pi: any) {
 	const hear = (o: any) => fs.appendFileSync("$heard", JSON.stringify(o) + "\n");
 	pi.on("input", (e: any) => {
-		hear({ input: e.text, source: e.source, behind: e.streamingBehavior });
+		// Before it is heard, as the test reads it once it is.
 		fs.writeFileSync("$dir/last-input", e.text);
+		hear({ input: e.text, source: e.source, behind: e.streamingBehavior });
 	});
 	pi.on("before_provider_request", async (e: any) => {
 		if (fs.existsSync("$dir/hold")) hear({ held: true });
@@ -167,8 +168,8 @@ export default function (pi: any) {
 }
 LISTEN
 
-# A permission gate, as a package installed after Blixel's, so its tool_call handler
-# runs after Blixel's: with gate-blocks it blocks every bash call.
+# A permission gate, as a package installed after Blixel's, so it decides after anything
+# Blixel's extension does in tool_call: with gate-blocks it blocks every bash call.
 echo '{"name":"gate","pi":{"extensions":["./gate.ts"]}}' >"$dir/gate/package.json"
 cat >"$dir/gate/gate.ts" <<GATE
 import * as fs from "node:fs";
@@ -252,8 +253,9 @@ receives_again() { # name; a new receive since the log was emptied, and no conne
 	never "$1" "agent connect"
 	waits_for alive || fail "$1: no receiver"
 }
-stays_stopped() { # name; nothing receives a moment later, past the first restart
-	sleep 1.3
+stays_stopped() { # name; nothing receives past where a restart would come: 1 s after a
+	# receiver that attached, 2 s after one that never did
+	sleep 2.3
 	never "$1" "agent receive"
 	gone || fail "$1: a receiver runs"
 }
@@ -374,11 +376,13 @@ stays_stopped "a receiver whose meeting ended"
 
 says "connect blixel" "Connected to the Blixel meeting"
 : >"$log"
+: >"$dir/out"
 rm "$dir/connection"
 kill -9 "$(cat "$dir/receiver")"
 waits_for logged "agent receive" || fail "no receive after a kill"
 : >"$log"
 stays_stopped "a receiver refused not_connected"
+if holds "$dir/out" "Blixel stopped receiving handoffs"; then fail "a receiver refused not_connected said it failed"; fi
 
 # Another receiver holds the session
 
@@ -390,7 +394,7 @@ other=$!
 : >"$log"
 waits_for logged "agent receive" || fail "no receive after a kill"
 : >"$log"
-sleep 1.3
+sleep 2.3
 never "a receiver beside another" "agent receive"
 says "connect blixel" "Connected to the Blixel meeting. Another receiver in this session takes its handoffs."
 kill "$other"

@@ -300,8 +300,9 @@ receives_again() { # name, session; a new receive since the log was emptied, and
 	never "$1" "agent connect"
 	waits_for alive "$2" || fail "$1: no receiver"
 }
-stays_stopped() { # name, session; nothing receives a moment later, past the first restart
-	sleep 1.3
+stays_stopped() { # name, session; nothing receives past where a restart would come: 1 s
+	# after a receiver that attached, 2 s after one that never did
+	sleep 2.3
 	never "$1" "agent receive"
 	gone "$2" || fail "$1: a receiver runs"
 }
@@ -436,6 +437,9 @@ kill -9 "$(cat "$dir/receiver-$three")"
 waits_for logged "agent receive" || fail "no receive after a kill"
 : >"$log"
 stays_stopped "a receiver refused not_connected" "$three"
+if shows "$three" "Blixel stopped receiving handoffs: This session is not connected"; then
+	fail "a receiver refused not_connected said it failed"
+fi
 
 # Another receiver holds the session, as the model's own can
 
@@ -447,7 +451,7 @@ echo "$other" >"$dir/receiver-$three"
 : >"$log"
 waits_for logged "agent receive" || fail "no receive after a kill"
 : >"$log"
-sleep 1.3
+sleep 2.3
 never "a receiver beside another" "agent receive"
 says "$three" blixel:connect "" "Connected to the Blixel meeting. Another receiver in this session takes its handoffs."
 kill "$other"
