@@ -1,7 +1,7 @@
 import { Plugin } from "@opencode/plugin/tui";
 
 // The prompts that act with no model, the same as Claude's mod and Codex's hooks read them.
-const PHRASE = /^(?:blixel[ :](connect|disconnect|status)|(connect|disconnect|status) blixel)(?: (ask|direct))?$/;
+const PHRASE = /^(?:blixel[ :](connect|disconnect|status)|(connect|disconnect|status) blixel)$/;
 
 export default Plugin.define({
 	id: "blixel",
@@ -28,9 +28,7 @@ export default Plugin.define({
 						const input = ctx.renderer.currentFocusedRenderable as any;
 						const said = PHRASE.exec(String(input?.plainText ?? "").trim().toLowerCase());
 						const verb = said?.[1] ?? said?.[2];
-						if (verb && prompt?.mode !== "shell" && (!said?.[3] || verb === "connect")) {
-							input.setText(`/blixel:${verb}${said?.[3] ? ` ${said[3]}` : ""}`);
-						}
+						if (verb && prompt?.mode !== "shell") input.setText(`/blixel:${verb}`);
 						return false;
 					},
 				},
