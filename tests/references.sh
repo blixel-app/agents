@@ -7,8 +7,10 @@ failed=0
 
 fail() { echo "FAIL: $1"; failed=1; }
 
-# Every fixed `provider` the CLI answers, one per session variable it knows. Any other
-# comes from BLIXEL_AGENT_PROVIDER, or is `agent`, and takes the generic recipe.
+# Every fixed `provider` the CLI answers, one per session variable it knows: the table
+# under "Which session" in the blixel repo's docs/cli.md, which `blixel agent connect
+# --help` lists the variables of. Any other comes from BLIXEL_AGENT_PROVIDER, or is
+# `agent`, and takes the generic recipe.
 providers='claude codex opencode pi hermes'
 
 for provider in $providers; do
