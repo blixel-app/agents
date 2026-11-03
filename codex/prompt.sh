@@ -1,37 +1,10 @@
 #!/bin/sh
-# What the filter in hooks.json lets through: a prompt that may be a request, and
-# every prompt of a session that has connected, as any of them can be a handoff.
+# Hook 1: answers a typed command and ends the turn before any model sees it. Codex
+# tells no handoff from a prompt the user typed, so a handoff that is a command runs it.
 . "$PLUGIN_ROOT/hook.sh"
-prompt=$(field prompt "$input")
-
-# Comes first: someone in the call saying a phrase must not run it. A connect in a
-# hook never read the skill, so its rules travel with each handoff, which also keeps
-# them past a compaction.
-set -- "$state/queued.$(printf '%s' "$prompt" | md5 -q)".*
-if [ -e "$1" ]; then
-	rm -f "$1"
-	echo "This prompt is a Blixel handoff, in the session the user connected to their meeting to receive them."
-	sed -n '/^## Blixel handoffs$/,/^## Connect$/p' "$PLUGIN_ROOT/skills/connect-agent/SKILL.md" | sed '1d;$d'
-	exit 0
-fi
-
-# The whole prompt, in any case: $blixel:connect as the picker writes it, or a plain
-# spelling.
-words=$(printf '%s' "$prompt" | tr '[:upper:]' '[:lower:]')
-verb=
-approval=
-case $words in
-'$blixel:status' | 'status blixel' | 'blixel status' | 'blixel:status') verb=status ;;
-'$blixel:disconnect' | 'disconnect blixel' | 'blixel disconnect' | 'blixel:disconnect') verb=disconnect ;;
-*' ask') approval=ask words=${words% ask} ;;
-*' direct') approval=direct words=${words% direct} ;;
-esac
-case $words in
-'$blixel:connect' | 'connect blixel' | 'blixel connect' | 'blixel:connect') verb=connect ;;
-esac
+verb=$(command_of "$(field prompt "$input")")
 [ -n "$verb" ] || exit 0
 
-# Ends the turn before any model sees the prompt.
 stop() { # text
 	printf '{"continue":false,"stopReason":"%s"}\n' \
 		"$(printf '%s' "$1" | tr '[:cntrl:]' ' ' | sed 's/\\/\\\\/g; s/"/\\"/g')"
@@ -40,9 +13,6 @@ stop() { # text
 
 ask_blixel() { # arguments; leaves its last line in $answer
 	answer=$("$blixel" agent "$@" 2>&1 | tail -n 1)
-	# An older Blixel queues into a thread itself, with no marker: no rules would
-	# come with a handoff and one could say a phrase. What it answers is the skill's.
-	[ "$(field error.code "$answer")" != not_in_agent_session ] || exit 0
 }
 
 shared() { # text; adds what a thread on the shared app-server must know
@@ -59,16 +29,13 @@ refused() { # what failed
 	stop "$1$message. $(field error.hint "$answer")"
 }
 
+# Hook 2 connects too, and receives: connecting the same session twice answers the
+# same connection, so neither waits for the other.
 connect() {
-	# Tells relay.sh, running beside this hook, that this prompt is a connect.
-	if ! connected; then
-		mkdir -p "$state"
-		: >"$state/connecting"
-	fi
-	ask_blixel connect ${approval:+--approval "$approval"}
+	ask_blixel connect
 	[ "$(field data.outcome "$answer")" = connected ] || refused "Blixel did not connect: "
 	text="Connected to the Blixel meeting. Handoffs from people in it will arrive in this conversation."
-	field data.replaced "$answer" >/dev/null &&
+	[ "$(field data.replaced "$answer")" = true ] &&
 		text="$text Another session was connected and no longer receives them."
 	stop "$(shared "$text")"
 }
@@ -77,6 +44,8 @@ status() {
 	ask_blixel status
 	field error.code "$answer" >/dev/null && refused ""
 	if field data.session.connection_id "$answer" >/dev/null; then
+		[ "$(field data.session.receiving "$answer")" = true ] ||
+			stop 'Connected to the Blixel meeting, but not receiving its handoffs. Type $blixel:connect to receive them.'
 		stop "$(shared "Connected to the Blixel meeting. Handoffs from people in it arrive in this conversation.")"
 	elif [ "$(field data.connection.agent_pid "$answer")" = "$PPID" ]; then
 		stop 'Blixel handoffs go to another Codex conversation. Type $blixel:connect here to move them.'

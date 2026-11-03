@@ -12,12 +12,13 @@ input=$BLIXEL_HOOK_INPUT
 unset BLIXEL_HOOK_INPUT
 session=${input#*\"session_id\":\"}
 session=${session%%\"*}
+# The app compares session keys exactly, and a model's command sends the thread lowercased.
 case $session in '' | *[!0-9a-f-]*) exit 0 ;; esac
 export BLIXEL_AGENT_PID=$PPID BLIXEL_AGENT_SESSION_KEY=$session
 export BLIXEL_AGENT_PROVIDER=codex BLIXEL_AGENT_NAME=Codex
 blixel=$PLUGIN_ROOT/skills/connect-agent/scripts/blixel
-# All a session keeps, so a filter tells a session that never invoked Blixel from
-# one that did with a single `test`. `connected` means a relay belongs here.
+# All a session keeps, so a filter tells a session that never connected from one
+# that did with a single `test`. `connected` means a receiver belongs here.
 state=$PLUGIN_DATA/$session
 
 # It names the Codex process, as a connection ends with that: a thread resumed in
@@ -26,4 +27,14 @@ connected() { [ "$(cat "$state/connected" 2>/dev/null)" = "$PPID" ]; }
 
 field() { # key path, JSON
 	printf '%s' "$2" | plutil -extract "$1" raw -o - - 2>/dev/null
+}
+
+# The command a prompt is, if it is one: the whole prompt, in any case, as the
+# picker writes it ($blixel:connect) or a plain spelling.
+command_of() { # prompt
+	case $(printf '%s' "$1" | tr '[:upper:]' '[:lower:]') in
+	'$blixel:connect' | 'connect blixel' | 'blixel connect' | 'blixel:connect') echo connect ;;
+	'$blixel:status' | 'status blixel' | 'blixel status' | 'blixel:status') echo status ;;
+	'$blixel:disconnect' | 'disconnect blixel' | 'blixel disconnect' | 'blixel:disconnect') echo disconnect ;;
+	esac
 }
