@@ -1,7 +1,7 @@
 #!/bin/sh
 # Every Claude Code route to Blixel, against a folder on the session's PATH planted
-# with what a sandboxed process could write there. Hooks, the plugin's monitor and
-# the mod run outside the sandbox, so none may reach it.
+# with what a sandboxed process could write there. Hooks and the mod run outside the
+# sandbox, so none may reach it.
 root=$(cd "$(dirname "$0")/.." && pwd -P)
 scripts=$root/skills/connect-agent/scripts
 manifest=$root/.claude-plugin/plugin.json
@@ -22,7 +22,7 @@ done
 printf '#!/bin/sh\necho "$$ $*" >"%s/ran"\nexec sleep "${SLEEPS-0}"\n' "$dir" >"$dir/dev/blixel"
 chmod +x "$dir/dev/blixel"
 
-# Every run names the stand-in, so no test here reaches an installed Blixel. A follower
+# Every run names the stand-in, so no test here reaches an installed Blixel. A receiver
 # from one would never exit.
 export BLIXEL_HOOK_PATH="$dir/dev:/usr/bin:/bin"
 export PATH=/usr/bin:/bin
@@ -41,11 +41,6 @@ ran() { # what the stand-in was asked, once
 	rm -f "$dir/ran"
 }
 
-printf '{"command_args":"ask"}' >"$dir/hook-input"
-hook_input() { "$scripts/connect-arguments.sh" <"$dir/hook-input"; }
-planted "the arguments hook" hook_input
-planted "connect.sh" "$scripts/connect.sh"
-[ "$(ran)" = "agent connect" ] || fail "connect.sh passed over the stand-in"
 CLAUDE_PID=$$ planted "the SessionStart hook" "$scripts/session-start.sh"
 [ "$(ran)" = "agent status" ] || fail "the SessionStart hook passed over the stand-in"
 planted "app-cli" "$scripts/app-cli" agent status
@@ -54,10 +49,9 @@ planted "app-cli" "$scripts/app-cli" agent status
 # Every command in the manifest, as Claude Code expands it, so a new one is covered too.
 /usr/bin/sed -n 's/^ *"command": "\(.*\)",\{0,1\}$/\1/p' "$manifest" |
 	/usr/bin/sed "s/\\\\\"/\"/g; s|\${CLAUDE_PLUGIN_ROOT}|$root|" >"$dir/commands"
-[ "$(/usr/bin/wc -l <"$dir/commands")" -ge 4 ] || fail "read too few commands from the manifest"
+[ "$(/usr/bin/wc -l <"$dir/commands")" -ge 1 ] || fail "read too few commands from the manifest"
 while read -r command; do
 	CLAUDE_PID=$$ planted "$command" /bin/sh -c "$command"
-	case $command in *agent\ follow) [ "$(ran)" = "agent follow" ] || fail "$command passed over the stand-in" ;; esac
 	rm -f "$dir/ran"
 done <"$dir/commands"
 
@@ -84,7 +78,6 @@ for file in "$root"/skills/*/SKILL.md "$root"/commands/*.md; do
 	/usr/bin/awk '/^---$/ { n++; next } n == 1' "$file" | /usr/bin/grep -oE 'Bash(\([^)]*\))?' | while read -r rule; do
 		case $rule in
 		"Bash(/Applications/$cli agent "* | "Bash(~/Applications/$cli agent "*) ;;
-		'Bash("${CLAUDE_PLUGIN_ROOT}/skills/connect-agent/scripts/connect.sh"*)') ;;
 		*) echo "FAIL: $file approves $rule"; touch "$dir/rule" ;;
 		esac
 	done
