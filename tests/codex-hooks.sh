@@ -250,7 +250,7 @@ silent "not a thread" "$(prompt "connect blixel" "../../etc")"
 silent "not a thread, no id" "$(printf '{"prompt":"connect blixel"}' >"$dir/typed"; "$dir/host" "$answers" "$dir/typed")"
 never "no phrase" "$(cat "$log")" "blixel"
 
-# Typed commands, answered with no model
+# Typed commands, answered by hook 1
 
 reset
 for words in "connect blixel" "Connect Blixel" "blixel connect" "BLIXEL CONNECT" "blixel:connect" \
@@ -670,7 +670,7 @@ manifest=$root/.codex-plugin/plugin.json
 [ "$(plutil -extract hooks.UserPromptSubmit raw -o - "$hooks")" = 1 ] &&
 	[ "$(plutil -extract hooks.UserPromptSubmit.0.hooks raw -o - "$hooks")" = 2 ] || fail "not two hooks"
 plutil -extract hooks.UserPromptSubmit.0.hooks.0.async raw -o - "$hooks" >/dev/null 2>&1 &&
-	fail "hook 1 is async, so cannot end the turn"
+	fail "hook 1 is async, so the turn goes on without its answer"
 [ "$(plutil -extract hooks.UserPromptSubmit.0.hooks.1.async raw -o - "$hooks")" = true ] || fail "hook 2 not async"
 [ "$(plutil -extract hooks.UserPromptSubmit.0.hooks.1.timeout raw -o - "$hooks")" -ge 2592000 ] || fail "hook 2 dies"
 # Review hooks shows these; the plan words them.

@@ -232,10 +232,11 @@ disconnects. Commands and phrases are a shortcut past the model, never the only 
 an agent: each agent's part is in `references/`, the file a failed
 `blixel agent connect` names.
 
-A typed connect takes no model step, but in Codex one that runs nothing: the hook
-runs the command and the model says its answer, which Codex desktop shows nowhere else. Asked in words it takes the steps of reading the
-skill, and in Codex a failed try and its reference. Each release compares real connect
-times with the last one.
+A typed connect takes no model step, except in Codex: there the hook connects and the
+model says its answer in one reply that runs nothing, as Codex desktop shows a hook's
+answer nowhere else. Asked in words it takes the steps of reading the skill, and in
+Codex a failed try and its reference. Each release compares real connect times with
+the last one.
 
 `skills/blixel/scripts/blixel` and `skills/connect-agent/scripts/blixel` are the
 same script, so each skill works installed on its own; change them together.
