@@ -289,7 +289,11 @@ stops "ended disconnected"
 reset
 silent "desktop, words after it go to the model" "$(prompt "$(desktop connect) please")"
 silent "desktop, another skill goes to the model" "$(prompt '[$blixel:blixel](/x/SKILL.md) \\n')"
-never "desktop, words after it go to the model" "$(cat "$log")" "blixel agent"
+for words in "$(desktop connect)\\\"" "$(desktop connect)please" \
+	'[$blixel:connect](/x\"y/SKILL.md)' '[$blixel:connect](/x\nplease/SKILL.md)'; do
+	silent "desktop, not a pick goes to the model: $words" "$(prompt "$words")"
+done
+never "desktop, only a pick runs Blixel" "$(cat "$log")" "blixel agent"
 
 reset
 for words in "connect blixel please" '$blixel:connect please' '$blixel:connect ask' "connect blixel direct" \
