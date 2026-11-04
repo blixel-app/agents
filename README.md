@@ -261,8 +261,30 @@ and `claude plugin validate .` checks it the way Claude Code loads it.
 `tests/references.sh` that every `provider` the CLI answers has its reference,
 `tests/deliver-codex.sh` and `tests/deliver-opencode.sh` the programs `receive` runs for
 each handoff with the skills alone, `tests/codex-hooks.sh` Codex's hooks in `codex/`,
-`tests/pi.sh` the pi package in `pi/`, in real pi, and `tests/opencode.sh` the OpenCode
-package in `opencode/` and the skills alone, in real OpenCode. `codex/skills/` is a copy
+and `tests/plugins.sh` the pi package in `pi/` and the OpenCode package in `opencode/`:
+it runs `tests/*.spec.ts` under Node's own test runner (Node 24 or later), as
+`claude plugin test` loads no `node:` module, with each plugin in-process against a
+fake of its agent's plugin API and a stand-in `blixel`. No test runs a real agent.
+
+Manual checks before a release, as only a real agent shows them, each with a
+development build named by `BLIXEL_HOOK_PATH` and a scratch agent config:
+
+- pi: `pi install .` lists the three commands and both skills; the model's `bash`
+  names the session with `PI_SESSION_ID`; a gate installed before or after Blixel's
+  that blocks the model's connect leaves it unconnected; a handoff during a turn waits
+  for it, and Esc puts it back in the editor; `/reload` keeps receiving with no connect.
+- OpenCode: each shell, two sessions' at once included, names its session with
+  `OPENCODE_SESSION_ID`; a denied or declined connect never runs; a handoff during a
+  turn reaches the model after it; the model is told of the skills; stopping the
+  server ends its receivers; an idle location unloaded and loaded again keeps
+  receiving.
+- OpenCode's terminal: a phrase runs its command with no model turn, and in `!` shell
+  mode runs as typed.
+- OpenCode with the skills alone: the model connects, starts `receive` with
+  `deliver/opencode.sh` in a background shell of `opencode serve --service`, and a
+  handoff arrives byte for byte.
+
+`codex/skills/` is a copy
 of `skills/`, as Codex drops symlinks when it installs a plugin: run
 `scripts/codex-skills.sh` after changing a skill, and the test fails if you don't. `codex/codex-skills/` holds what Codex alone
 lists, the skills behind `$blixel:connect` and the rest. Hooks run outside Codex's
