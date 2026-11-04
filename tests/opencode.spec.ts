@@ -4,7 +4,7 @@ import * as fs from 'node:fs'
 import * as path from 'node:path'
 import { afterEach, beforeEach, mock, test } from 'node:test'
 
-import { Blixel, pause, ROOT, until } from './agents/blixel.ts'
+import { Blixel, children, pause, ROOT, until } from './agents/blixel.ts'
 import type { Receiver } from './agents/blixel.ts'
 import { OpenCode, Tui } from './agents/opencode.ts'
 
@@ -343,7 +343,7 @@ test('a connect waiting for permission runs nothing, and one the person declined
   opencode.permission = 'ask'
   const running = opencode.shell(id, 'blixel agent connect', () => blixel.connect(id))
   await until(() => opencode.asking, 'a permission asked')
-  await pause(100)
+  assert.deepEqual(children(), [])
   assert.deepEqual(blixel.calls, [])
 
   opencode.reply(false)
