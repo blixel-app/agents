@@ -6,7 +6,7 @@ verb=$(command_of "$(field prompt "$input")")
 [ -n "$verb" ] || exit 0
 
 stop() { # text
-	printf '{"continue":false,"stopReason":"%s"}\n' \
+	printf '{"continue":false,"systemMessage":"%s"}\n' \
 		"$(printf '%s' "$1" | tr '[:cntrl:]' ' ' | sed 's/\\/\\\\/g; s/"/\\"/g')"
 	exit 0
 }

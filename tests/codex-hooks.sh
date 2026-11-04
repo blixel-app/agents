@@ -185,9 +185,15 @@ stops() { # how the receiver stops (`ended <reason>` or `error <code> <status>`)
 
 receives() { grep -c "agent receive" "$log"; }
 
+# The answer is the systemMessage alone: Codex desktop shows no stopReason, and the
+# CLI shows both, one under the other.
 reason() { # the hook's output must be JSON that stops the turn
 	[ "$(printf '%s' "$1" | plutil -extract continue raw -o - -)" = false ] || fail "the turn went on: $1"
-	printf '%s' "$1" | plutil -extract stopReason raw -o - -
+	if printf '%s' "$1" | plutil -extract stopReason raw -o - - >/dev/null 2>&1; then
+		echo "FAIL: a stopReason beside the answer"
+		return
+	fi
+	printf '%s' "$1" | plutil -extract systemMessage raw -o - -
 }
 
 stopped() { ! kill -0 "$1" 2>/dev/null; }
