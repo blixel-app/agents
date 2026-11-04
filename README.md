@@ -232,7 +232,8 @@ disconnects. Commands and phrases are a shortcut past the model, never the only 
 an agent: each agent's part is in `references/`, the file a failed
 `blixel agent connect` names.
 
-A typed connect takes no model step. Asked in words it takes the steps of reading the
+A typed connect takes no model step, but in Codex one that runs nothing: the hook
+runs the command and the model says its answer, which Codex desktop shows nowhere else. Asked in words it takes the steps of reading the
 skill, and in Codex a failed try and its reference. Each release compares real connect
 times with the last one.
 

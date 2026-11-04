@@ -185,15 +185,20 @@ stops() { # how the receiver stops (`ended <reason>` or `error <code> <status>`)
 
 receives() { grep -c "agent receive" "$log"; }
 
-# The answer is the systemMessage alone: Codex desktop shows no stopReason, and the
-# CLI shows both, one under the other.
-reason() { # the hook's output must be JSON that stops the turn
-	[ "$(printf '%s' "$1" | plutil -extract continue raw -o - -)" = false ] || fail "the turn went on: $1"
-	if printf '%s' "$1" | plutil -extract stopReason raw -o - - >/dev/null 2>&1; then
-		echo "FAIL: a stopReason beside the answer"
-		return
-	fi
-	printf '%s' "$1" | plutil -extract systemMessage raw -o - -
+# The answer goes to the model as a note, and the model tells the user: Codex desktop
+# shows a stopped turn's text nowhere, and a blocked one only as a warning.
+reason() { # the hook's output must be JSON that lets the turn go on with the answer
+	for key in continue stopReason systemMessage decision reason; do
+		if printf '%s' "$1" | plutil -extract "$key" raw -o - - >/dev/null 2>&1; then
+			echo "FAIL: $key beside the answer"
+			return
+		fi
+	done
+	[ "$(printf '%s' "$1" | plutil -extract hookSpecificOutput.hookEventName raw -o - -)" = UserPromptSubmit ] ||
+		{ echo "FAIL: no UserPromptSubmit note"; return; }
+	note=$(printf '%s' "$1" | plutil -extract hookSpecificOutput.additionalContext raw -o - -)
+	case $note in *"run no command"*) ;; *) echo "FAIL: the note lets the model run a command"; return ;; esac
+	printf '%s' "$note"
 }
 
 stopped() { ! kill -0 "$1" 2>/dev/null; }
