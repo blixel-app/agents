@@ -34,6 +34,10 @@ const receiver = () => blixel.receivers.get(pi.sessionId)
 const SOCKET = 'BLIXEL_PI_SOCKET'
 const socket = (live: Receiver) => live.call.env[SOCKET]
 
+// pi loads extensions with no module cache, so a reload's runtime runs a fresh module instance.
+let loads = 0
+const anew = async () => (await import(`../pi/index.ts?load=${(loads += 1)}`)).default
+
 const connect = async () => {
   await pi.type('/blixel:connect')
   return receiver()!
@@ -266,7 +270,7 @@ test('a reload receives again in the next runtime, with no connect and no discon
   await pi.emit('session_shutdown', { reason: 'reload' })
   assert.equal(live.call.signal, 'SIGTERM')
 
-  pi = await new Pi(pi.sessionId).load(extension)
+  pi = await new Pi(pi.sessionId).load(await anew())
   await pi.emit('session_start', { reason: 'reload' })
   await until(() => receiver()?.attached === true, 'a receiver')
 
@@ -278,7 +282,7 @@ test('a reload receives again in the next runtime, with no connect and no discon
 
 test('a reload of a session that did not receive starts nothing', async () => {
   await pi.emit('session_shutdown', { reason: 'reload' })
-  pi = await new Pi(pi.sessionId).load(extension)
+  pi = await new Pi(pi.sessionId).load(await anew())
   await pi.emit('session_start', { reason: 'reload' })
   await pi.emit('session_start', { reason: 'startup' })
 
