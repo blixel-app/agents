@@ -6,26 +6,25 @@ import { clock, excerpt, LOGO, wrap } from './panel'
 
 type Handoff = { n: number; text: string }
 type Queue = { next: number; pending: Handoff[] }
-type Failure = { code: string; message: string; hint?: string }
-type Answer = { data: Record<string, any>; error?: undefined; requestID?: undefined } | { error: Failure; requestID?: string }
-type Attachment = 'attached' | 'waiting' | 'refused' | 'stopped'
+type Failure = { code: string; message: string; hint?: string; context?: Record<string, any> }
+type Answer =
+  | { data: Record<string, any>; stdout: string; error?: undefined; requestID?: undefined }
+  | { error: Failure; requestID?: string }
 type Session = {
   ready: () => Promise<boolean>
-  connect: (approval: string) => Promise<string>
+  connect: () => Promise<string>
+  takeOver: (id: unknown) => Promise<string | undefined>
   disconnect: () => Promise<string>
   status: () => Promise<string>
   deliver: () => Promise<void>
   refresh: () => Promise<Answer>
   show: () => void
-  ownsHandoffs: () => boolean
-  connecting: () => Promise<(() => void) | undefined>
-  follow: () => Promise<void>
   forget: () => Promise<void>
 }
 
 const PANE = 'blixel'
 // The prompts that act with no model, the same as Codex's hooks read them.
-const PHRASE = /^(?:blixel[ :](connect|disconnect|status)|(connect|disconnect|status) blixel)(?: (ask|direct))?$/
+const PHRASE = /^(?:blixel[ :](connect|disconnect|status)|(connect|disconnect|status) blixel)$/
 const HISTORY = 20
 const EMPTY: Panel = {
   app: 'unknown',
@@ -35,30 +34,29 @@ const EMPTY: Panel = {
   room: null,
   meeting: null,
   approval: null,
-  isViaMonitor: false,
+  receiver: null,
   handoffs: [],
 }
 // Change the tag when Panel changes: a value an earlier version wrote
 // outlives a reload.
-const panel = atom({ plugin: 'blixel', key: 'panel' } as const, EMPTY, { shape: 'panel-2' })
+const panel = atom({ plugin: 'blixel', key: 'panel' } as const, EMPTY, { shape: 'panel-3' })
 const opened = atom({ plugin: 'blixel', key: 'opened' } as const, [])
 
-// Both of the plugin's monitors' description, and the Monitor the skill starts.
-const MONITOR = 'Blixel handoffs'
+// Never `--print-handoffs`: session-start.sh takes a receiver with that for a
+// Monitor's, and tells the model to keep one going.
+const RECEIVE = ['agent', 'receive', '--print-events', '--confirm-each']
 const POLL_MS = 15_000
-// Polls a follower with no connection outlives: the skill it started for may
-// yet connect.
-const IDLE_POLLS = 4
-// How long loading the skill waits for the mod's follower to attach.
-const ATTACH_MS = 2_000
+// How long a connect waits for its receiver to attach before it answers. It
+// counts against a hook's 10 s.
+const RECEIVING_MS = 5_000
 // A /clear empties $.state just after session.end's hooks return.
 const CLEARED_MS = 1_000
 // After the user stops a turn, Claude Code drops the queued prompt and
 // refuses new ones until the user's next input.
 const STOPPED = ['the session was stopped and nobody has sent input since', 'was removed from the queue before it ran']
 
-async function connect($: EngineInterface, session: Session, approval: string) {
-  const text = await session.connect(approval)
+async function connect($: EngineInterface, session: Session) {
+  const text = await session.connect()
   if ((await $.session.surfaces()).includes('desktop')) await $.ui.open({ id: PANE, title: 'Blixel' })
   return text
 }
@@ -75,8 +73,6 @@ function failure(error: Failure) {
       return 'Blixel is not in a meeting. Join a room in the app, then run /blixel:connect again.'
     case 'app_unavailable':
       return 'The Blixel app is not running. Open it and try again.'
-    case 'monitor_not_running':
-      return "Blixel could not reach this session's follower. Run /blixel:status, then /blixel:connect again."
     default:
       return error.hint ? `${error.message}. ${error.hint}` : error.message
   }
@@ -121,12 +117,11 @@ const MARKS = {
 function describe(state: Panel) {
   if (state.app === 'closed') return { headline: "Blixel isn't running", detail: 'Open the Blixel app to receive handoffs.' }
   if (state.isConnected) {
-    const approval =
-      state.approval === 'ask' ? 'The app asks you before each handoff' : 'Handoffs come straight to this session'
-    return {
-      headline: `Connected to ${state.room ?? 'your meeting'}`,
-      detail: state.isViaMonitor ? `${approval}, through its monitor.` : `${approval}.`,
-    }
+    const headline = `Connected to ${state.room ?? 'your meeting'}`
+    if (state.receiver === 'other') return { headline, detail: 'Another receiver in this session takes its handoffs.' }
+    if (state.receiver === null) return { headline, detail: 'Not receiving handoffs. Connect again to receive them.' }
+    const detail = state.approval === 'ask' ? 'The app asks you before each handoff.' : 'Handoffs come straight to this session.'
+    return { headline, detail }
   }
   if (state.app === 'running' && !state.isInMeeting) {
     return { headline: 'Not in a meeting', detail: 'Join a room in Blixel, then connect this session.' }
@@ -138,11 +133,12 @@ function describe(state: Panel) {
 }
 
 /** The status line: the connection, then what waits. */
-function statusLine(state: Panel, connected: boolean, viaMonitor: boolean, waiting: number, stopped: boolean) {
+function statusLine(state: Panel, waiting: number, stopped: boolean) {
   const parts: string[] = []
-  if (connected) {
-    const to = state.room ? `connected to ${state.room}` : 'connected'
-    parts.push(viaMonitor ? `${to}, handoffs go to its monitor` : to)
+  if (state.isConnected) {
+    parts.push(state.room ? `connected to ${state.room}` : 'connected')
+    if (state.receiver === 'other') parts.push('handoffs go to another receiver')
+    if (state.receiver === null) parts.push('not receiving')
     if (state.isReconnecting) parts.push('reconnecting')
   }
   if (waiting > 0) parts.push(`${counted(waiting)} waiting${stopped ? ' for your next message' : ''}`)
@@ -188,13 +184,13 @@ export const register: Register = on => {
         return true
       })())
 
-    let acks = true
     let saving = 0
     let connected = false
-    let attachment: Attachment = 'stopped'
+    let isAttached = false
     let delivering = false
     let stopped = false
     let disconnecting = false
+    let connecting = 0
     let sessionID = ''
     const before = await read($, panel)
     let view: Panel = { ...before, app: 'unknown' }
@@ -211,7 +207,7 @@ export const register: Register = on => {
       const events = jsonLines(run.stderr)
       if (run.exitCode === 0) {
         const result = jsonLines(run.stdout).at(-1)
-        if (result) return { data: result.data ?? {} }
+        if (result) return { data: result.data ?? {}, stdout: run.stdout }
       }
       return {
         error: events.findLast(event => event.error?.code)?.error ?? {
@@ -223,14 +219,17 @@ export const register: Register = on => {
     }
 
     const show = () => {
+      view = {
+        ...view,
+        isConnected: connected,
+        receiver: isAttached ? 'mod' : view.receiver === 'mod' ? null : view.receiver,
+      }
       // The engine puts the plugin's name in front of the line.
-      $.ui.status(statusLine(view, connected, attachment === 'refused', queue.pending.length, stopped))
+      $.ui.status(statusLine(view, queue.pending.length, stopped))
 
       const pending = new Set(queue.pending.map(one => one.n))
       view = {
         ...view,
-        isConnected: connected,
-        isViaMonitor: attachment === 'refused',
         handoffs: view.handoffs.map(one => ({
           ...one,
           state: !pending.has(one.n) ? 'delivered' : stopped ? 'held' : 'waiting',
@@ -273,133 +272,152 @@ export const register: Register = on => {
     }
 
     // `failed` promises it will not run, so it leaves the queue only once the
-    // app takes that answer: an older app has already told the sender queued.
-    const refuse = async (n: number, id: number) => {
-      const answer = await call(['agent', 'ack', String(id), 'failed', '--reason', 'the session could not save it'])
+    // app takes that answer: past the app's 10 s the sender has heard otherwise.
+    const refuse = async (n: number, id: string) => {
+      const answer = await call(['agent', 'confirm', id, 'failed', '--reason', 'the session could not save it'])
       if (answer.error || answer.data.outcome !== 'recorded') return
       queue = { ...queue, pending: queue.pending.filter(one => one.n !== n) }
       view = { ...view, handoffs: view.handoffs.filter(one => one.n !== n) }
     }
 
-    // Saved before it is submitted: the follower has already told the app it
-    // printed this one, so the queue is the only copy left.
-    const receive = (line: string) => {
-      const printed = jsonLines(line)[0]
+    // Saved before it is confirmed and submitted: once confirmed, the queue is
+    // the only copy left.
+    const take = (data: Record<string, any>) => {
       // `message` keeps the line breaks; a handoff that fills a frame comes without it.
-      const text = [printed?.message, printed?.prompt].find(one => typeof one === 'string' && one.trim() !== '')
+      const text = [data.message, data.prompt].find(one => typeof one === 'string' && one.trim() !== '')
       if (text === undefined) return
-      const sender = typeof printed.sender_name === 'string' ? printed.sender_name : ''
+      const sender = typeof data.sender?.name === 'string' ? data.sender.name : ''
       const handoff: PanelHandoff = { n: queue.next, text, sender, at: Date.now(), state: 'waiting' }
       queue = { next: queue.next + 1, pending: [...queue.pending, { n: handoff.n, text }] }
       view = { ...view, handoffs: [handoff, ...view.handoffs].slice(0, HISTORY) }
       show()
       saving += 1
       void save().then(async held => {
-        // Once, whatever it answers: after an app restart the same id can be
-        // another handoff, and an app too old for acks has answered already.
-        if (acks && Number.isInteger(printed.id)) {
-          if (held) void call(['agent', 'ack', String(printed.id), 'queued'])
-          else await refuse(handoff.n, printed.id)
+        if (typeof data.id === 'string' && data.id !== '') {
+          if (held) void call(['agent', 'confirm', data.id, 'delivered'])
+          else await refuse(handoff.n, data.id)
         }
         saving -= 1
         return deliver()
       })
     }
 
-    const notice = (line: string) => {
-      const event = jsonLines(line)[0]
-      if (event?.error?.code === 'usage' && event.error.message?.includes('--acks')) acks = false
-      if (event?.event !== 'follower' || typeof event.data?.state !== 'string') return
-      attachment = event.data.state
+    let poll: { cancel: () => void } | undefined
+    let retry: { cancel: () => void } | undefined
+    let child: ReturnType<typeof $.process.spawn> | undefined
+    // Each start takes a number; one that a later start or a stop overtook gives up.
+    let starts = 0
+    let waiting: (() => void)[] = []
+    const settled = () => {
+      for (const resolve of waiting.splice(0)) resolve()
+    }
+
+    const lost = (reason?: string) => {
+      if (connected && !disconnecting) {
+        $.ui.toast(reason ? `Blixel disconnected this session (${reason}).` : 'Blixel disconnected this session.')
+      }
+      connected = false
+      view = { ...view, receiver: null }
+      rest()
+    }
+
+    const receive = (attempt: number) => {
+      const mine = (starts += 1)
+      void (async () => {
+        let out = ''
+        let err = ''
+        let ended: string | undefined
+        let failed: Failure | undefined
+        const environment = await env()
+        if (mine !== starts || !poll || child) return
+        const own = (child = $.process.spawn({ argv: [cli, ...RECEIVE], env: environment }))
+        try {
+          for await (const { stream, text } of own) {
+            if (stream === 'stderr') {
+              err = lines(err + text, line => {
+                failed = jsonLines(line)[0]?.error ?? failed
+              })
+              continue
+            }
+            out = lines(out + text, line => {
+              const event = jsonLines(line)[0]
+              if (event?.event === 'receiving') {
+                attempt = 0
+                isAttached = true
+                show()
+                settled()
+              } else if (event?.event === 'handoff') take(event.data ?? {})
+              else if (event?.event === 'ended') ended = String(event.data?.reason ?? '')
+            })
+          }
+        } catch {
+          // Started again, as one that stopped with no word.
+        }
+        // Stopped by this mod, and perhaps already replaced.
+        if (child !== own) return
+        child = undefined
+        isAttached = false
+        settled()
+        if (ended === 'received_elsewhere') {
+          view = { ...view, receiver: 'other' }
+          show()
+        } else if (ended !== undefined || failed?.code === 'not_connected') {
+          // A connect in flight starts the next one for its own connection.
+          if (connecting === 0) lost(ended ?? failed?.context?.last_ended)
+        } else if (failed && failed.code !== 'cancelled') {
+          // It would fail the same way each time.
+          $.ui.toast(`Blixel stopped receiving handoffs: ${failure(failed)}`)
+          show()
+        } else if (poll) {
+          show()
+          retry = $.clock.after(Math.min(60_000, 1_000 * 2 ** attempt), () => receive(attempt + 1))
+        }
+      })()
+    }
+
+    // Starts receiving, if this mod is not already, and answers once it does
+    // or has stopped trying.
+    const wake = () => {
+      const answered = new Promise<void>(resolve => {
+        if (isAttached) resolve()
+        else waiting.push(resolve)
+      })
+      // A tick while an answer is still out would only start two more
+      // processes waiting behind it.
+      poll ??= $.clock.every(POLL_MS, async () => {
+        if (unanswered === 0) await refresh()
+      })
+      if (!child) {
+        retry?.cancel()
+        // On a timer because a child takes the event that started it with it, and
+        // a prompt cannot be submitted from a hook: every handoff would fail.
+        retry = $.clock.after(0, () => receive(0))
+      }
+      return answered
+    }
+
+    const receiving = () => Promise.race([wake(), $.clock.sleep(RECEIVING_MS)])
+
+    const rest = () => {
+      poll?.cancel()
+      poll = undefined
+      retry?.cancel()
+      retry = undefined
+      starts += 1
+      const own = child
+      child = undefined
+      isAttached = false
+      // Its stream's return is what kills the child.
+      void own?.return(undefined as never).catch(() => undefined)
       settled()
       show()
     }
 
-    let poll: { cancel: () => void } | undefined
-    let retry: { cancel: () => void } | undefined
-    let child: ReturnType<typeof $.process.spawn> | undefined
-    let idle = 0
-    let settled = () => {}
-    let answering = Promise.resolve()
-
-    const follow = (attempt: number) => {
-      void (async () => {
-        let out = ''
-        let err = ''
-        let own: typeof child
-        const hadAcks = acks
-        try {
-          const environment = await env()
-          if (!poll || child) return
-          own = child = $.process.spawn({ argv: [cli, 'agent', 'follow', '--json', ...(acks ? ['--acks'] : [])], env: environment })
-          for await (const { stream, text } of own) {
-            if (stream === 'stdout') out = lines(out + text, receive)
-            else err = lines(err + text, notice)
-            if (attachment === 'attached') attempt = 0
-          }
-        } catch {
-          // A follower that cannot start is retried like one that exited.
-        }
-        settled()
-        // Stopped, and perhaps already replaced.
-        if (child !== own) return
-        child = undefined
-        attachment = 'stopped'
-        show()
-        if (!poll) return
-        // A connect is waiting for this follower: dropping --acks is no failure.
-        retry = $.clock.after(hadAcks && !acks ? 0 : Math.min(60_000, 1_000 * 2 ** attempt), () => follow(attempt + 1))
-      })()
-    }
-
-    // Refreshes overlap (the poll, a command, the skill's Bash call): an
-    // answer that lands after a later refresh's says what is no longer so.
+    // Refreshes overlap (the poll, a command, a Bash call): an answer that
+    // lands after a later refresh's says what is no longer so.
     let asked = 0
     let answered = 0
     let unanswered = 0
-    let connects = 0
-
-    // Answers once this follower has said where it stands to the app, or ended.
-    const wake = () => {
-      idle = 0
-      if (poll) return answering
-      answering = new Promise<void>(resolve => {
-        settled = resolve
-      })
-      // A tick while an answer is still out would only start two more
-      // processes waiting behind it.
-      poll = $.clock.every(POLL_MS, async () => {
-        if (unanswered > 0) return
-        await refresh()
-        if (!connected && (idle += 1) >= IDLE_POLLS) rest()
-      })
-      // On a timer because a child takes the event that started it with it, and
-      // a prompt cannot be submitted from a hook: every handoff would fail.
-      retry = $.clock.after(0, () => follow(0))
-      return answering
-    }
-
-    const rest = () => {
-      if (!poll || connects > 0) return
-      poll.cancel()
-      poll = undefined
-      retry?.cancel()
-      // Its stream's return is what kills the child.
-      void child?.return(undefined as never).catch(() => undefined)
-      child = undefined
-      attachment = 'stopped'
-      show()
-    }
-
-    const connecting = async () => {
-      if (!(await ready())) return undefined
-      since = Math.max(since, queue.next)
-      connects += 1
-      void wake()
-      return () => {
-        connects -= 1
-      }
-    }
 
     const refresh = async (): Promise<Answer> => {
       if (!(await ready())) return { error: { code: 'failed', message: 'This session has no claude process to name' } }
@@ -417,7 +435,6 @@ export const register: Register = on => {
           if (connected) $.ui.toast('Blixel closed, and this session is no longer connected.')
           connected = false
           view = { ...view, app: 'closed', isInMeeting: false, isReconnecting: false, room: null, approval: null }
-          show()
           rest()
         }
         return answer
@@ -426,7 +443,8 @@ export const register: Register = on => {
       // Each answer is read apart, and the app tells its agents about a
       // meeting after it joins: a room is the meeting both name, or none.
       const room = current.error || current.data.meeting_id !== answer.data.meeting_id ? undefined : current.data
-      const now = typeof answer.data.session?.connection_id === 'string'
+      const own = answer.data.session ?? {}
+      const now = typeof own.connection_id === 'string'
       view = {
         ...view,
         room: room?.state !== 'idle' && typeof room?.room?.name === 'string' && room.room.name !== '' ? room.room.name : null,
@@ -434,6 +452,7 @@ export const register: Register = on => {
         app: 'running',
         isInMeeting: typeof answer.data.meeting_id === 'string',
         approval: now ? (answer.data.connection?.approval_mode ?? null) : null,
+        receiver: isAttached ? 'mod' : own.receiving === true ? 'other' : null,
       }
       // The list is one meeting's: a connection to another starts it again.
       const connectedTo = answer.data.connection?.meeting_id ?? answer.data.meeting_id
@@ -442,52 +461,66 @@ export const register: Register = on => {
         view = { ...view, meeting: connectedTo, handoffs: kept }
       }
       since = Math.max(since, mark)
-      if (connected && !now && !disconnecting) {
-        const reason = answer.data.session?.ended?.end_reason
-        $.ui.toast(reason ? `Blixel disconnected this session (${reason}).` : 'Blixel disconnected this session.')
+      if (connected && !now && connecting === 0) lost(own.ended?.end_reason)
+      else {
+        connected = now
+        show()
       }
-      const ended = connected && !now
-      connected = now
-      show()
-      if (ended) rest()
-      // A connection this mod did not make: a monitor's, or one from before a reload.
-      else if (now) void wake()
       return answer
     }
 
-    // The skill's guidance on handoffs, which a session connected without
-    // loading the skill has never read.
-    const brief = async () => {
-      const skill = await $.fs.read(`${$.plugin.root}/skills/connect-agent/SKILL.md`).catch(() => '')
-      const section = skill.match(/^## Blixel handoffs\n([\s\S]*?)^## /m)?.[1]?.trim()
-      if (!section) return
-      const text =
-        "This Claude Code session is connected to the user's Blixel meeting: the user ran /blixel:connect " +
-        `to receive handoffs, which arrive as prompts worded as the user set in Blixel.\n\n${section}`
-      await $.session.append({ message: { type: 'user', content: [{ type: 'text', text }] } }).catch(() => undefined)
+    const connectOnce = async () => {
+      let answer = await call(['agent', 'connect'])
+      if (answer.error?.code === 'connect_outcome_unknown' && answer.requestID) {
+        answer = await call(['agent', 'connect', '--request-id', answer.requestID])
+      }
+      return answer
     }
 
     session = {
       ready,
 
-      connect: async approval => {
-        const args = ['agent', 'connect', ...(approval ? ['--approval', approval] : [])]
-        // The app holds this connect until the follower it starts attaches.
-        const done = await connecting()
-        let answer = await call(args)
-        if (answer.error?.code === 'connect_outcome_unknown' && answer.requestID) {
-          answer = await call([...args, '--request-id', answer.requestID])
+      connect: async () => {
+        if (!(await ready())) return 'This session has no claude process to name.'
+        connecting += 1
+        try {
+          since = Math.max(since, queue.next)
+          const answer = await connectOnce()
+          if (answer.error) return failure(answer.error)
+          connected = true
+          await receiving()
+          await refresh()
+          const replaced = answer.data.replaced === true ? ' It replaced the session that was connected before.' : ''
+          if (view.receiver === 'other') return `Connected to the Blixel meeting. Another receiver in this session takes its handoffs.${replaced}`
+          if (view.receiver === null) return `Connected to the Blixel meeting, but not receiving its handoffs yet. Run /blixel:status to check.${replaced}`
+          return `Connected to the Blixel meeting. Handoffs from people in it arrive here as prompts.${replaced}`
+        } finally {
+          connecting -= 1
+          // A handoff that came while this answered cannot be submitted from the
+          // hook waiting on it: on a timer it goes once that hook has returned.
+          $.clock.after(0, () => void deliver())
         }
-        done?.()
-        if (answer.error) {
-          if (!connected) rest()
-          return failure(answer.error)
+      },
+
+      // The model's own connect already ran, approved; this receives for it
+      // and answers as connect does once something receives. Only for this
+      // session's connection: the connect below would otherwise make one the
+      // approval never covered, as for `--session-env` or over ssh.
+      takeOver: async (id: unknown) => {
+        if (!(await ready())) return undefined
+        connecting += 1
+        try {
+          since = Math.max(since, queue.next)
+          const mine = await refresh()
+          if (mine.error || typeof id !== 'string' || mine.data.session?.connection_id !== id) return undefined
+          connected = true
+          await receiving()
+          const answer = await connectOnce()
+          await refresh()
+          return answer.error ? undefined : answer.stdout
+        } finally {
+          connecting -= 1
         }
-        const wasConnected = connected
-        await refresh()
-        if (!wasConnected) await brief()
-        const replaced = answer.data.replaced ? ' It replaced the session that was connected before.' : ''
-        return `Connected to the Blixel meeting. Handoffs from people in it arrive here as prompts.${replaced}`
       },
 
       disconnect: async () => {
@@ -496,6 +529,8 @@ export const register: Register = on => {
           const answer = await call(['agent', 'disconnect'])
           if (answer.error) return failure(answer.error)
           await refresh()
+          connected = false
+          view = { ...view, receiver: null }
           rest()
           return answer.data.outcome === 'not_connected'
             ? 'This session was not connected to Blixel.'
@@ -511,13 +546,16 @@ export const register: Register = on => {
         const { meeting_id: meeting, connection, session: own = {} } = answer.data
         const report: string[] = []
         if (!meeting) report.push('Blixel is not in a meeting.')
-        if (connected) {
+        if (connected && view.receiver === 'mod') {
           report.push(
             connection?.approval_mode === 'ask'
               ? 'This session is connected to the Blixel meeting; the app asks before each handoff.'
               : 'This session is connected to the Blixel meeting; handoffs come straight here.',
           )
-          if (attachment === 'refused') report.push("A monitor in this session delivers the meeting's handoffs.")
+        } else if (connected && view.receiver === 'other') {
+          report.push('This session is connected to the Blixel meeting; another receiver in it takes its handoffs.')
+        } else if (connected) {
+          report.push('This session is connected to the Blixel meeting, but not receiving its handoffs. Run /blixel:connect to receive them.')
         } else if (connection) {
           report.push('Another agent is connected to the Blixel meeting; this session is not.')
         } else if (meeting) {
@@ -535,23 +573,19 @@ export const register: Register = on => {
       deliver,
       refresh,
       show,
-      ownsHandoffs: () => key !== '' && attachment !== 'refused',
-      connecting,
-      follow: async () => {
-        if (await ready()) await wake()
-      },
       forget: async () => {
         if (key) await $.store.delete(key).catch(() => undefined)
       },
     }
 
-    // A reload ended the follower; $.state outlives it and says this session
-    // had one, or handoffs left to submit.
-    if (before.isConnected) {
-      void refresh().then(answer => {
-        // Unread is not ended: a poll settles it, and without a follower the
-        // connection would lapse first.
-        if (answer.error && answer.error.code !== 'app_unavailable') void session?.follow()
+    // A reload ended the receiver; $.state outlives it and says this mod
+    // received for this session, or had handoffs left to submit.
+    if (before.isConnected && before.receiver === 'mod') {
+      void ready().then(async isReady => {
+        if (!isReady) return
+        const answer = await refresh()
+        // Unread is not ended: `receive` itself says if the connection is gone.
+        if (connected || (answer.error && answer.error.code !== 'app_unavailable')) void wake()
       })
     }
     if (before.handoffs.some(one => one.state !== 'delivered')) void ready().then(() => deliver())
@@ -563,10 +597,10 @@ export const register: Register = on => {
     const typed = e.origin.kind === 'composer' || e.origin.kind === 'bridge'
     const said = typed && !e.command ? PHRASE.exec(e.text.trim().toLowerCase()) : null
     const verb = said?.[1] ?? said?.[2]
-    if (!said || !verb || (said[3] && verb !== 'connect')) return next(e)
+    if (!verb) return next(e)
     if (!(await session?.ready()) || !session) return next(e)
     const answers = {
-      connect: () => connect($, session, said[3] ?? ''),
+      connect: () => connect($, session),
       disconnect: session.disconnect,
       status: () => status($, session),
     }
@@ -579,16 +613,11 @@ export const register: Register = on => {
     return { drop: text }
   })
 
-  // Plain plugin commands, so every surface lists them; where the mod follows
+  // Plain plugin commands, so every surface lists them; where the mod receives
   // nothing, each runs as the prompt it holds.
-  on('command.run', { command: 'blixel:connect' }, async ($, e, next) => {
-    if (!(await session?.ready()) || !session) return next(e)
-    const approval = e.args.trim()
-    if (approval !== '' && approval !== 'ask' && approval !== 'direct') {
-      return { text: 'Usage: /blixel:connect [ask|direct]' }
-    }
-    return { text: await connect($, session, approval) }
-  })
+  on('command.run', { command: 'blixel:connect' }, async ($, e, next) =>
+    session && (await session.ready()) ? { text: await connect($, session) } : next(e),
+  )
 
   on('command.run', { command: 'blixel:disconnect' }, async ($, e, next) =>
     session && (await session.ready()) ? { text: await session.disconnect() } : next(e),
@@ -606,7 +635,7 @@ export const register: Register = on => {
       update($, opened, list => (list.includes(n) ? list.filter(one => one !== n) : [...list, n]))
     const act = async () => {
       if (!(await session?.ready()) || !session) return
-      const text = state.isConnected ? await session.disconnect() : await session.connect('')
+      const text = state.isConnected ? await session.disconnect() : await session.connect()
       if (!/^(Connected|Disconnected)/.test(text)) $.ui.toast(text)
     }
     const { headline, detail } = describe(state)
@@ -742,46 +771,27 @@ export const register: Register = on => {
     return completed
   })
 
-  // Loading the skill arms the plugin's monitor, and the first follower to
-  // attach keeps a session's handoffs: the mod's has to get there before it.
-  on('tool.call', { tool: 'Skill' }, async ($, e, next) => {
-    if (session && /^(blixel:)?connect-agent$/.test(e.skill)) {
-      const attached = session.follow()
-      await Promise.race([attached, $.clock.sleep(ATTACH_MS)])
-    }
-    return next(e)
-  })
-
-  // The connect-agent skill connects and disconnects through Bash.
+  // The model connects through Bash, by the connect-agent skill. `next` runs
+  // Claude Code's permission decision and then the command, so nothing here acts
+  // before the person does: a declined or blocked connect never ran, and is left
+  // alone. One that connected is taken over, and the model reads that the
+  // session receives, so it starts no receiver of its own.
   on('tool.call', { tool: 'Bash' }, async ($, e, next) => {
     // A command that only quotes it, as a grep or a commit message does, is no invocation.
     const command = /(?:^|[\s;&|(/])blixel["']?\s+agent\s+(connect|disconnect)\b/.exec(e.command)?.[1]
-    const connected = command === 'connect' ? await session?.connecting() : undefined
-    try {
-      const ran = await next(e)
-      if (command) void session?.refresh()
-      return ran
-    } finally {
-      connected?.()
-    }
-  })
-
-  // A monitor the skill armed only waits behind the mod's follower, and once
-  // that stops it would attach and take the next connection's handoffs.
-  on('classic.Stop', async ($, e, next) => {
-    const stopped = await next(e)
-    if (session?.ownsHandoffs()) {
-      for (const task of e.background_tasks ?? []) {
-        // Claude Code reports a plugin monitor as a shell task.
-        if (task.description !== MONITOR || !task.command?.includes('agent follow')) continue
-        // A call under an `ask` rule would stop the end of the turn on a dialog
-        // about a task the user never heard of.
-        const verdict = await $.tool.check({ tool: 'TaskStop', input: { task_id: task.id } }).catch(() => undefined)
-        if (verdict?.decision !== 'allow') continue
-        await $.tool.call({ tool: 'TaskStop', task_id: task.id }).catch(() => undefined)
+    const ran = await next(e)
+    if (!command || !session || ran.deny || ran.isError) return ran
+    if (command === 'connect') {
+      const stdout = typeof ran.result?.stdout === 'string' ? ran.result.stdout : ''
+      const answered = jsonLines(stdout).at(-1)?.data
+      if (answered?.outcome === 'connected') {
+        const answer = await session.takeOver(answered.connection?.connection_id)
+        if (answer !== undefined) return { result: { ...ran.result, stdout: answer } }
+        return ran
       }
     }
-    return stopped
+    void session.refresh()
+    return ran
   })
 
   // `clear` and `resume` go on in the same process, with the same queue.

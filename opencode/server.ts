@@ -1,43 +1,70 @@
 import { execFile, spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as net from "node:net";
 import * as path from "node:path";
+import type { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 
 import { Plugin, Skill } from "@opencode/plugin";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SKILLS = path.join(HERE, "..", "skills");
-const SKILL = path.join(SKILLS, "connect-agent");
 // Finds the CLI inside Blixel.app, never on PATH, and ends in `exec`, so killing it
-// kills the relay.
-const CLI = path.join(SKILL, "scripts", "app-cli");
-const SUBMIT = path.join(HERE, "submit.sh");
-// A command the model runs, not a mention of one, as in `grep "blixel agent connect"`.
-const RUNS = /(?:^|[\s;&|(/])blixel["']? agent (connect|disconnect|status)\b/;
-const RELAYS = Symbol.for("blixel.opencode.relays");
+// kills the receiver.
+const CLI = path.join(SKILLS, "connect-agent", "scripts", "app-cli");
+const RECEIVE = ["agent", "receive", "--deliver-with", path.join(HERE, "submit.sh")];
+// A connect the model runs, not a mention of one, as in `grep "blixel agent connect"`.
+const RUNS = /(?:^|[\s;&|(/])blixel["']? agent connect\b/;
+// How long a connect waits for its receiver to attach before it answers.
+const RECEIVING_MS = 5_000;
+const RECEIVERS = Symbol.for("blixel.opencode.receivers");
+const LEAVING = Symbol.for("blixel.opencode.leaving");
 
 type Verb = "connect" | "disconnect" | "status";
-type Answer = { data?: any; error?: { message?: string; hint?: string } };
-type Relay = { child: ChildProcess; server: net.Server; leave: () => void };
+type Failure = { code?: string; message?: string; hint?: string };
+type Answer = { data?: any; error?: Failure };
+type Receiver = {
+	child?: ChildProcess;
+	server: net.Server;
+	folder: string;
+	attached: boolean;
+	elsewhere: boolean;
+	waiting: (() => void)[];
+	retry?: NodeJS.Timeout;
+	leave: () => Promise<void>;
+};
 
-// A server holds many sessions, so each one connected has its own relay. They live here
-// because OpenCode unloads a location an hour after its last session event, as a quiet
-// meeting can be, and loads this file anew for the next prompt. No plugin call can stop
-// that, and this plugin's cleanup must not end the connection when it happens.
-const shared = globalThis as { [RELAYS]?: Map<string, Relay> };
-const relays = (shared[RELAYS] ??= new Map());
+// A server holds many sessions, so each one connected has its own receiver. They live
+// here because OpenCode unloads a location an hour after its last session event, as a
+// quiet meeting can be, and loads this file anew for the next prompt. No plugin call
+// can stop that, and this plugin's cleanup must not stop receiving when it happens.
+const shared = globalThis as { [RECEIVERS]?: Map<string, Receiver>; [LEAVING]?: Map<string, Promise<void>> };
+const receivers = (shared[RECEIVERS] ??= new Map());
+// A stopped receiver until it exits: the app refuses a second one while it lives.
+const leaving = (shared[LEAVING] ??= new Map());
 
-function rules() {
-	const skill = fs.readFileSync(path.join(SKILL, "SKILL.md"), "utf8");
-	const section = /^## Blixel handoffs\n([\s\S]*?)^## Connect$/m.exec(skill)?.[1].trim();
-	return `This session is connected to the user's Blixel meeting, and they connected it to receive handoffs.\n\n${section}`;
+function last(text: string): Answer | undefined {
+	try {
+		return JSON.parse(text.trim().split("\n").at(-1) ?? "");
+	} catch {
+		return undefined;
+	}
 }
 
-function failure({ error }: Answer) {
+function failure(error?: Failure) {
 	return [error?.message ?? "Blixel did not answer.", error?.hint].filter(Boolean).join(" ");
+}
+
+function lines(stream: Readable, take: (line: string) => void) {
+	let rest = "";
+	stream.setEncoding("utf8");
+	stream.on("data", (chunk: string) => {
+		const parts = (rest + chunk).split("\n");
+		rest = parts.pop() ?? "";
+		parts.forEach(take);
+	});
+	stream.on("end", () => rest && take(rest));
 }
 
 function skill(name: string) {
@@ -56,47 +83,38 @@ function skill(name: string) {
 export default Plugin.define({
 	id: "blixel",
 	async setup(ctx) {
-		const guidance = rules();
-		// Shell hooks have no session ID; a unique command bridges each tool invocation.
-		const commands = new Map<string, { session: string; command: string }>();
+		// The variable OpenCode's shell tool sets, so the model's commands and these name
+		// one session, whose agent process is this server.
+		const environment = (session: string) => ({ ...process.env, OPENCODE_SESSION_ID: session });
 
-		// The server's pid, as it holds the session and a terminal only attaches to it.
-		const environment = (session: string) => ({
-			BLIXEL_AGENT_PID: String(process.pid),
-			BLIXEL_AGENT_PROVIDER: "opencode",
-			BLIXEL_AGENT_NAME: "OpenCode",
-			BLIXEL_AGENT_SESSION_KEY: session,
-		});
-
-		const ask = (session: string, ...args: string[]) =>
-			new Promise<Answer>((resolve) =>
-				execFile(
-					CLI,
-					["agent", ...args],
-					{ env: { ...process.env, ...environment(session) } },
-					(_error, stdout, stderr) => {
-						const line = (stdout.trim() || stderr.trim()).split("\n").at(-1) ?? "";
-						try {
-							resolve(JSON.parse(line));
-						} catch {
-							resolve({ error: { message: line || undefined } });
-						}
-					},
-				),
+		const call = (session: string, ...args: string[]) =>
+			new Promise<{ answer: Answer; stdout: string }>((resolve) =>
+				execFile(CLI, ["agent", ...args], { env: environment(session) }, (_error, stdout, stderr) => {
+					const line = stderr.trim().split("\n").at(-1);
+					resolve({ answer: last(stdout) ?? last(stderr) ?? { error: { message: line || undefined } }, stdout });
+				}),
 			);
 
-		const stop = (session: string) => {
-			const relay = relays.get(session);
-			if (!relay) return;
-			relays.delete(session);
-			process.off("exit", relay.leave);
-			relay.server.close();
-			relay.leave();
+		const settled = (receiver: Receiver) => {
+			for (const resolve of receiver.waiting.splice(0)) resolve();
 		};
 
-		// The relay's submit is another process, so each text comes back over this socket.
+		const stop = (session: string) => {
+			const receiver = receivers.get(session);
+			if (!receiver) return;
+			receivers.delete(session);
+			process.off("exit", receiver.leave);
+			clearTimeout(receiver.retry);
+			receiver.server.close();
+			const exited = receiver.leave();
+			leaving.set(session, exited);
+			void exited.then(() => leaving.get(session) === exited && leaving.delete(session));
+			settled(receiver);
+		};
+
+		// The deliver program is another process, so each text comes back over this socket.
 		// A NUL ends it, as no argument can hold one.
-		const receive = (session: string) => (socket: net.Socket) => {
+		const take = (session: string) => (socket: net.Socket) => {
 			const chunks: Buffer[] = [];
 			socket.on("data", (chunk) => {
 				chunks.push(chunk);
@@ -107,60 +125,136 @@ export default Plugin.define({
 					() => socket.end("no"),
 				);
 			});
-			// A submit the relay stopped closes on us, and an unheard error would end the server.
+			// A program `receive` stopped closes on us, and an unheard error would end the server.
 			socket.on("error", () => {});
 		};
 
-		const start = (session: string) => {
+		const receive = (session: string, attempt: number) => {
+			const receiver = receivers.get(session);
+			if (!receiver || receiver.child) return;
+			const child = spawn(CLI, RECEIVE, {
+				env: { ...environment(session), BLIXEL_OPENCODE_SOCKET: path.join(receiver.folder, "submit") },
+				stdio: ["ignore", "pipe", "pipe"],
+			});
+			receiver.child = child;
+			let ended: string | undefined;
+			let failed: Failure | undefined;
+			lines(child.stdout!, (line) => {
+				const event = last(line) as { event?: string; data?: any } | undefined;
+				if (event?.event === "receiving") {
+					attempt = 0;
+					receiver.attached = true;
+					receiver.elsewhere = false;
+					settled(receiver);
+				} else if (event?.event === "ended") ended = String(event.data?.reason ?? "");
+			});
+			lines(child.stderr!, (line) => {
+				failed = last(line)?.error ?? failed;
+			});
+			child.on("error", (error) => {
+				failed ??= { message: error.message };
+			});
+			child.on("close", () => {
+				// Stopped here, and perhaps already started again.
+				if (receivers.get(session) !== receiver || receiver.child !== child) return;
+				receiver.child = undefined;
+				receiver.attached = false;
+				if (ended === "received_elsewhere") {
+					receiver.elsewhere = true;
+					stop(session);
+				} else if (ended !== undefined || failed?.code === "not_connected") {
+					stop(session);
+				} else if (failed && failed.code !== "cancelled") {
+					// It would fail the same way each time.
+					stop(session);
+					void ctx.session.synthetic({
+						sessionID: session,
+						text: `Blixel stopped receiving handoffs: ${failure(failed)}`,
+						description: `Blixel stopped receiving handoffs: ${failure(failed)}`,
+						resume: false,
+					});
+				} else {
+					settled(receiver);
+					receiver.retry = setTimeout(() => receive(session, attempt + 1), Math.min(60_000, 1_000 * 2 ** attempt));
+					receiver.retry.unref();
+				}
+			});
+		};
+
+		const make = (session: string) => {
 			// Under /tmp, as a socket's path has a limit a long TMPDIR passes.
 			const folder = fs.mkdtempSync("/tmp/blixel-opencode-");
-			const socket = path.join(folder, "submit");
 			// nc closes its side once it has sent the text, and OpenCode can take longer to answer.
-			const server = net.createServer({ allowHalfOpen: true }, receive(session)).listen(socket);
-			const child = spawn(CLI, ["agent", "relay", "--submit", SUBMIT], {
-				env: { ...process.env, ...environment(session), BLIXEL_OPENCODE_SOCKET: socket },
-				// A pipe nobody reads would hold up its renewals.
-				stdio: "ignore",
-			});
-			const ended = () => {
-				if (relays.get(session)?.child === child) stop(session);
+			const server = net.createServer({ allowHalfOpen: true }, take(session)).listen(path.join(folder, "submit"));
+			const receiver: Receiver = {
+				server,
+				folder,
+				attached: false,
+				elsewhere: false,
+				waiting: [],
+				// Answers once the receiver has exited, or 3 s on.
+				leave: () => {
+					const child = receiver.child;
+					fs.rmSync(folder, { recursive: true, force: true });
+					return new Promise<void>((resolve) => {
+						if (!child || child.exitCode !== null || child.signalCode !== null) return resolve();
+						child.once("close", () => resolve());
+						setTimeout(resolve, 3_000).unref();
+						child.kill();
+					});
+				},
 			};
-			child.on("error", ended).on("exit", ended);
-			const leave = () => {
-				child.kill();
-				fs.rmSync(folder, { recursive: true, force: true });
-			};
-			process.once("exit", leave);
-			relays.set(session, { child, server, leave });
+			// The server ending ends the connection, as the app sees its agent process exit.
+			process.once("exit", receiver.leave);
+			receivers.set(session, receiver);
+			return receiver;
+		};
+
+		// Receives for the session, if nothing here does already, and answers once it does
+		// or has stopped trying.
+		const receiving = async (session: string) => {
+			const receiver = receivers.get(session) ?? make(session);
+			receiver.elsewhere = false;
+			if (!receiver.child) {
+				clearTimeout(receiver.retry);
+				await leaving.get(session);
+				receive(session, 0);
+			}
+			if (receiver.attached || !receiver.child) return receiver;
+			await Promise.race([
+				new Promise<void>((resolve) => receiver.waiting.push(resolve)),
+				new Promise<void>((resolve) => setTimeout(resolve, RECEIVING_MS).unref()),
+			]);
+			return receiver;
 		};
 
 		const answers: Record<Verb, (session: string, argument: string) => Promise<string>> = {
-			connect: async (session, approval) => {
-				if (approval && approval !== "ask" && approval !== "direct") return "Usage: /blixel:connect [ask|direct]";
-				const started = !relays.has(session);
-				if (started) start(session);
-				const answer = await ask(session, "connect", ...(approval ? ["--approval", approval] : []));
-				if (answer.data?.outcome !== "connected") {
-					if (started) stop(session);
-					return `Blixel did not connect: ${failure(answer)}`;
-				}
-				const text = "Connected to the Blixel meeting. Handoffs from people in it will arrive in this conversation.";
-				return answer.data.replaced ? `${text} Another session was connected and no longer receives them.` : text;
+			connect: async (session, argument) => {
+				if (argument) return "Usage: /blixel:connect";
+				const { answer } = await call(session, "connect");
+				if (answer.data?.outcome !== "connected") return `Blixel did not connect: ${failure(answer.error)}`;
+				const receiver = await receiving(session);
+				const replaced = answer.data.replaced ? " Another session was connected and no longer receives them." : "";
+				if (receiver.attached) return `Connected to the Blixel meeting. Handoffs from people in it will arrive in this conversation.${replaced}`;
+				if (receiver.elsewhere) return `Connected to the Blixel meeting. Another receiver in this session takes its handoffs.${replaced}`;
+				return `Connected to the Blixel meeting, but not receiving its handoffs yet. Type /blixel:status to check.${replaced}`;
 			},
 			disconnect: async (session) => {
-				const answer = await ask(session, "disconnect");
+				const { answer } = await call(session, "disconnect");
 				const outcome = answer.data?.outcome;
-				if (outcome !== "disconnected" && outcome !== "not_connected") return failure(answer);
+				if (outcome !== "disconnected" && outcome !== "not_connected") return failure(answer.error);
 				stop(session);
 				return outcome === "disconnected"
 					? "Disconnected from the Blixel meeting. Handoffs stop arriving."
 					: "This session was not connected to the Blixel meeting.";
 			},
 			status: async (session) => {
-				const answer = await ask(session, "status");
-				if (answer.error) return failure(answer);
+				const { answer } = await call(session, "status");
+				if (answer.error) return failure(answer.error);
 				if (answer.data?.session?.connection_id) {
-					return "Connected to the Blixel meeting. Handoffs from people in it arrive in this conversation.";
+					return answer.data.session.receiving
+						? "Connected to the Blixel meeting. Handoffs from people in it arrive in this conversation."
+						: "Connected to the Blixel meeting, but not receiving its handoffs. Type /blixel:connect to receive them.";
 				}
 				if (answer.data?.connection?.connection_id) {
 					return "Another session is connected to the Blixel meeting. Type /blixel:connect here to move its handoffs to this one.";
@@ -173,7 +267,7 @@ export default Plugin.define({
 		};
 
 		const descriptions: Record<Verb, string> = {
-			connect: "Connect this session to the Blixel meeting: [ask|direct]",
+			connect: "Connect this session to the Blixel meeting, so people in it can hand it requests",
 			disconnect: "Stop receiving Blixel handoffs in this session",
 			status: "Show whether this session receives Blixel handoffs",
 		};
@@ -196,38 +290,29 @@ export default Plugin.define({
 			}
 		});
 
+		// The shell tool asks for permission inside `execute`, so only a command that was
+		// allowed and ran gets past it: a declined or blocked connect throws and is left
+		// alone. A connect of this session is taken over, and the model reads that the
+		// session receives. A connect of another session, as with `--session-env` or over
+		// ssh, is left alone: the connect below would make one the call never asked for.
 		await ctx.tool.transform((editor) => {
 			editor.update("shell", (tool) => {
 				const execute = tool.execute;
 				tool.execute = async (input, context) => {
-					const command = String(input.command ?? "");
-					const verb = RUNS.exec(command)?.[1];
-					if (!verb) return execute(input, context);
-					const key = `# blixel ${randomUUID()}\n${command}`;
-					commands.set(key, { session: context.sessionID, command });
-					try {
-						if (verb === "connect" && !relays.has(context.sessionID)) start(context.sessionID);
-						return await execute({ ...input, command: key }, context);
-					} finally {
-						commands.delete(key);
-					}
+					const ran = await execute(input, context);
+					if (input.background === true || !RUNS.test(String(input.command ?? ""))) return ran;
+					const answered = last(typeof ran?.output?.output === "string" ? ran.output.output : "")?.data;
+					const id = answered?.connection?.connection_id;
+					if (answered?.outcome !== "connected" || typeof id !== "string") return ran;
+					const mine = (await call(context.sessionID, "status")).answer;
+					if (mine.data?.session?.connection_id !== id) return ran;
+					await receiving(context.sessionID);
+					const { answer, stdout } = await call(context.sessionID, "connect");
+					if (answer.data?.outcome !== "connected") return ran;
+					const text = stdout.trim();
+					return { ...ran, output: { ...ran.output, output: text }, content: [{ type: "text", text }] };
 				};
 			});
 		});
-
-		await ctx.shell.hook("create.before", async (event) => {
-			const pending = commands.get(event.command);
-			if (!pending) return;
-			event.command = pending.command;
-			Object.assign(event.env, environment(pending.session));
-		});
-
-		// A connect with no model never reads the skill, and this outlasts a compaction.
-		const guide = async (event: { sessionID: string; system: { type: "text"; text: string }[] }) => {
-			if (relays.has(event.sessionID)) event.system.push({ type: "text", text: guidance });
-		};
-		await ctx.session.hook("context", guide);
-		await ctx.session.hook("compaction", guide);
-		await ctx.session.hook("generate", guide);
 	},
 });

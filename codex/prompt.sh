@@ -1,48 +1,21 @@
 #!/bin/sh
-# What the filter in hooks.json lets through: a prompt that may be a request, and
-# every prompt of a session that has connected, as any of them can be a handoff.
+# Hook 1: runs a typed command and hands its answer to the model as a note, to say in
+# one line: Codex desktop shows a stopped turn's text nowhere, and a blocked one only
+# as a warning. Codex tells no handoff from a prompt the user typed, so a handoff that
+# is a command runs it.
 . "$PLUGIN_ROOT/hook.sh"
-prompt=$(field prompt "$input")
-
-# Comes first: someone in the call saying a phrase must not run it. A connect in a
-# hook never read the skill, so its rules travel with each handoff, which also keeps
-# them past a compaction.
-set -- "$state/queued.$(printf '%s' "$prompt" | md5 -q)".*
-if [ -e "$1" ]; then
-	rm -f "$1"
-	echo "This prompt is a Blixel handoff, in the session the user connected to their meeting to receive them."
-	sed -n '/^## Blixel handoffs$/,/^## Connect$/p' "$PLUGIN_ROOT/skills/connect-agent/SKILL.md" | sed '1d;$d'
-	exit 0
-fi
-
-# The whole prompt, in any case: $blixel:connect as the picker writes it, or a plain
-# spelling.
-words=$(printf '%s' "$prompt" | tr '[:upper:]' '[:lower:]')
-verb=
-approval=
-case $words in
-'$blixel:status' | 'status blixel' | 'blixel status' | 'blixel:status') verb=status ;;
-'$blixel:disconnect' | 'disconnect blixel' | 'blixel disconnect' | 'blixel:disconnect') verb=disconnect ;;
-*' ask') approval=ask words=${words% ask} ;;
-*' direct') approval=direct words=${words% direct} ;;
-esac
-case $words in
-'$blixel:connect' | 'connect blixel' | 'blixel connect' | 'blixel:connect') verb=connect ;;
-esac
+verb=$(command_of "$(field prompt "$input")")
 [ -n "$verb" ] || exit 0
 
-# Ends the turn before any model sees the prompt.
-stop() { # text
-	printf '{"continue":false,"stopReason":"%s"}\n' \
-		"$(printf '%s' "$1" | tr '[:cntrl:]' ' ' | sed 's/\\/\\\\/g; s/"/\\"/g')"
+tell() { # text
+	note="The Blixel plugin's hook already ran this command, and answered: $1 Tell the user that answer in one short line, and run no command."
+	printf '{"hookSpecificOutput":{"hookEventName":"UserPromptSubmit","additionalContext":"%s"}}\n' \
+		"$(printf '%s' "$note" | tr '[:cntrl:]' ' ' | sed 's/\\/\\\\/g; s/"/\\"/g')"
 	exit 0
 }
 
 ask_blixel() { # arguments; leaves its last line in $answer
 	answer=$("$blixel" agent "$@" 2>&1 | tail -n 1)
-	# An older Blixel queues into a thread itself, with no marker: no rules would
-	# come with a handoff and one could say a phrase. What it answers is the skill's.
-	[ "$(field error.code "$answer")" != not_in_agent_session ] || exit 0
 }
 
 shared() { # text; adds what a thread on the shared app-server must know
@@ -55,44 +28,52 @@ shared() { # text; adds what a thread on the shared app-server must know
 }
 
 refused() { # what failed
-	message=$(field error.message "$answer") || stop "${answer:-Blixel did not answer.}"
-	stop "$1$message. $(field error.hint "$answer")"
+	message=$(field error.message "$answer") || tell "${answer:-Blixel did not answer.}"
+	tell "$1$message. $(field error.hint "$answer")"
 }
 
+# Hook 2 connects too, and receives: connecting the same session twice answers the
+# same connection, so neither waits for the other.
 connect() {
-	# Tells relay.sh, running beside this hook, that this prompt is a connect.
-	if ! connected; then
-		mkdir -p "$state"
-		: >"$state/connecting"
-	fi
-	ask_blixel connect ${approval:+--approval "$approval"}
+	ask_blixel connect
 	[ "$(field data.outcome "$answer")" = connected ] || refused "Blixel did not connect: "
 	text="Connected to the Blixel meeting. Handoffs from people in it will arrive in this conversation."
-	field data.replaced "$answer" >/dev/null &&
+	[ "$(field data.replaced "$answer")" = true ] &&
 		text="$text Another session was connected and no longer receives them."
-	stop "$(shared "$text")"
+	tell "$(shared "$text")"
 }
 
 status() {
 	ask_blixel status
+	# With the flag, hook 2 starts a stopped receiver again on this same prompt: the
+	# answer waits up to 5 s for the app to see it.
+	tries=0
+	while connected && [ "$tries" -lt 10 ] && field data.session.connection_id "$answer" >/dev/null &&
+		[ "$(field data.session.receiving "$answer")" != true ]; do
+		sleep 0.5
+		tries=$((tries + 1))
+		ask_blixel status
+	done
 	field error.code "$answer" >/dev/null && refused ""
 	if field data.session.connection_id "$answer" >/dev/null; then
-		stop "$(shared "Connected to the Blixel meeting. Handoffs from people in it arrive in this conversation.")"
+		[ "$(field data.session.receiving "$answer")" = true ] ||
+			tell 'Connected to the Blixel meeting, but not receiving its handoffs. Type $blixel:connect to receive them.'
+		tell "$(shared "Connected to the Blixel meeting. Handoffs from people in it arrive in this conversation.")"
 	elif [ "$(field data.connection.agent_pid "$answer")" = "$PPID" ]; then
-		stop 'Blixel handoffs go to another Codex conversation. Type $blixel:connect here to move them.'
+		tell 'Blixel handoffs go to another Codex conversation. Type $blixel:connect here to move them.'
 	elif field data.connection.connection_id "$answer" >/dev/null; then
-		stop 'Another session is connected to the Blixel meeting. Type $blixel:connect here to move its handoffs to this one.'
+		tell 'Another session is connected to the Blixel meeting. Type $blixel:connect here to move its handoffs to this one.'
 	elif field data.meeting_id "$answer" >/dev/null; then
-		stop 'This conversation is not connected to the Blixel meeting. Type $blixel:connect to connect it.'
+		tell 'This conversation is not connected to the Blixel meeting. Type $blixel:connect to connect it.'
 	fi
-	stop "Blixel is not in a meeting."
+	tell "Blixel is not in a meeting."
 }
 
 disconnect() {
 	ask_blixel disconnect
 	case $(field data.outcome "$answer") in
-	disconnected) stop "Disconnected from the Blixel meeting. Handoffs stop arriving." ;;
-	not_connected) stop "This conversation was not connected to the Blixel meeting." ;;
+	disconnected) tell "Disconnected from the Blixel meeting. Handoffs stop arriving." ;;
+	not_connected) tell "This conversation was not connected to the Blixel meeting." ;;
 	esac
 	refused ""
 }

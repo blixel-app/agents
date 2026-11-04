@@ -1,51 +1,80 @@
 #!/bin/sh
-# Codex's hook scripts, run for real against stand-ins for `blixel` and `codex`:
-# `claude plugin test` has no processes, so this one runs on its own.
+# Codex's hook scripts, run for real against a stand-in for `blixel`: `claude plugin
+# test` has no processes, so this one runs on its own.
 root=$(cd "$(dirname "$0")/../codex" && pwd -P)
 dir=$(mktemp -d)
 trap 'pkill -f "$dir"; rm -rf "$dir"' EXIT
 failed=0
 thread=01a19327-87e5-71b0-838d-13985efedb4a
 other=01a19327-b6e5-7282-b42a-fa627ce665f4
+deliver=$root/skills/connect-agent/scripts/deliver/codex.sh
 export PLUGIN_ROOT=$root PLUGIN_DATA=$dir/data HOME=$dir PATH="$dir:/usr/bin:/bin"
 export BLIXEL_HOOK_PATH="$dir:/usr/bin:/bin:/usr/sbin:/sbin"
 log=$dir/log
 
-# `blixel` logs each run with the session it claims. `agent relay` runs its submit
-# once per line of $dir/handoffs, as the real one does, then stays until the test
-# writes the status it leaves with to $dir/relay-exit.
+# `blixel` logs each run with the session it claims, and answers as the real CLI does:
+# a connect connects the session, `receive` refuses a session with no connection
+# (`not_connected`, exit 5), ends at once with `received_elsewhere` beside a live
+# receiver, and otherwise prints `receiving` and runs its program once per line of
+# $dir/handoffs. It then stays until the test writes how it stops to $dir/stops:
+# `ended <reason>` or `error <code> <exit status>`.
 cat >"$dir/blixel" <<STANDIN
 #!/bin/sh
 dir=$dir
 echo "blixel \$* pid=\$BLIXEL_AGENT_PID key=\$BLIXEL_AGENT_SESSION_KEY provider=\$BLIXEL_AGENT_PROVIDER name=\$BLIXEL_AGENT_NAME thread=\$CODEX_THREAD_ID input=\${BLIXEL_HOOK_INPUT:+leaked}" >>"\$dir/log"
+event() { printf '{"data":%s,"event":"%s","schema_version":1}\n' "\$2" "\$1"; }
 case "\$*" in
-"agent relay"*)
-	echo \$\$ >"\$dir/relay.\$\$"
+"agent receive"*)
+	if [ ! -f "\$dir/connection" ]; then
+		echo '{"error":{"code":"not_connected","message":"This session is not connected to the meeting","context":{"last_ended":"disconnected"}}}' >&2
+		exit 5
+	fi
+	for live in "\$dir"/receiver.*; do
+		if [ -f "\$live" ] && kill -0 "\$(cat "\$live")" 2>/dev/null; then
+			event ended '{"reason":"received_elsewhere"}'
+			exit 0
+		fi
+	done
+	echo \$\$ >"\$dir/receiver.\$\$"
+	event receiving '{"connection_id":"c-1"}'
 	while IFS= read -r handoff; do
 		BLIXEL_HANDOFF_ID=\${handoff%% *} "\$4" "\${handoff#* }" </dev/null >/dev/null 2>&1
-		echo "submit \${handoff%% *} exited \$?" >>"\$dir/log"
+		echo "deliver \${handoff%% *} exited \$?" >>"\$dir/log"
+		event delivered "{\"id\":\"\${handoff%% *}\",\"state\":\"delivered\"}"
 	done <"\$dir/handoffs"
-	until [ -f "\$dir/relay-exit" ]; do /bin/sleep 0.01; done
-	exit "\$(cat "\$dir/relay-exit")" ;;
-"agent status") cat "\$dir/status" ;;
-"agent disconnect") cat "\$dir/disconnect" ;;
+	until [ -f "\$dir/stops" ]; do /bin/sleep 0.01; done
+	read -r how code status <"\$dir/stops"
+	rm -f "\$dir/receiver.\$\$"
+	case \$how in
+	ended) event ended "{\"reason\":\"\$code\"}"; exit 0 ;;
+	*) echo "{\"error\":{\"code\":\"\$code\",\"message\":\"Stopped\"}}" >&2; exit "\$status" ;;
+	esac ;;
+"agent status")
+	# With status-live, the app's answer for a connected session that receives
+	# while a receiver is live.
+	if [ -f "\$dir/status-live" ]; then
+		receiving=false
+		for live in "\$dir"/receiver.*; do
+			[ -f "\$live" ] && kill -0 "\$(cat "\$live")" 2>/dev/null && receiving=true
+		done
+		printf '{"data":{"meeting_id":"m","connection":{"connection_id":"c-1","agent_pid":1},"session":{"connection_id":"c-1","receiving":%s}}}' "\$receiving"
+	else
+		cat "\$dir/status"
+	fi ;;
+"agent disconnect")
+	rm -f "\$dir/connection"
+	cat "\$dir/disconnect" ;;
 "agent connect"*)
-	if [ -f "\$dir/old" ]; then
-		echo '{"error":{"code":"not_in_agent_session","message":"Not a session"}}' >&2
-		exit 2
+	echo '{"data":{"request_id":"r-1"},"event":"request_id","schema_version":1}' >&2
+	status=\$(cat "\$dir/connect-status")
+	if [ "\$status" = 0 ]; then
+		touch "\$dir/connection"
+		cat "\$dir/connect"
+	else
+		cat "\$dir/connect" >&2
 	fi
-	echo '{"event":"request_id"}' >&2
-	cat "\$dir/connect" >&2
-	exit "\$(cat "\$dir/connect-status")" ;;
+	exit "\$status" ;;
 esac
-STANDIN
-# `codex` logs its arguments, one by one, and does what $dir/codex-does says.
-cat >"$dir/codex" <<STANDIN
-#!/bin/sh
-dir=$dir
-for a in "\$@"; do printf '[%s] ' "\$a"; done >>"\$dir/log"
-echo >>"\$dir/log"
-. "\$dir/codex-does"
 STANDIN
 # Stays the parent of the hook, as Codex does, and runs it as Codex does:
 # `host [word] command input`.
@@ -57,27 +86,22 @@ PATH=${SESSION_PATH:-$PATH}
 "${HOOK_SHELL:-/bin/zsh}" -c "$1" <"$2" &
 wait $!
 STANDIN
-chmod +x "$dir/blixel" "$dir/codex" "$dir/host"
+chmod +x "$dir/blixel" "$dir/host"
 
 hooks=$root/hooks.json
-connects=$(plutil -extract hooks.UserPromptSubmit.0.hooks.0.command raw -o - "$hooks")
-restarts=$(plutil -extract hooks.UserPromptSubmit.0.hooks.1.command raw -o - "$hooks")
-tool=$(plutil -extract hooks.PreToolUse.0.hooks.0.command raw -o - "$hooks")
+answers=$(plutil -extract hooks.UserPromptSubmit.0.hooks.0.command raw -o - "$hooks")
+receives=$(plutil -extract hooks.UserPromptSubmit.0.hooks.1.command raw -o - "$hooks")
 
 reset() {
-	rm -rf "$dir/data" "$dir/old" "$dir/relay-exit" "$dir"/relay.* "$log"
+	pkill -f "$dir/blixel agent receive" 2>/dev/null
+	rm -rf "$dir/data" "$dir/stops" "$dir"/receiver.* "$dir/connection" "$log"
 	mkdir "$dir/data"
 	: >"$log"
 	: >"$dir/handoffs"
-	echo '{"data":{"outcome":"connected"}}' >"$dir/connect"
+	echo '{"data":{"outcome":"connected","receiving":false,"replaced":false},"schema_version":1}' >"$dir/connect"
 	echo 0 >"$dir/connect-status"
 	echo '{"data":{"meeting_id":"m"}}' >"$dir/status"
 	echo '{"data":{"outcome":"disconnected"}}' >"$dir/disconnect"
-	queues "Queued message 1 for thread $thread"
-}
-
-queues() { # what `codex queue` prints; exit status
-	printf 'echo "%s"\nexit %s\n' "$1" "${2:-0}" >"$dir/codex-does"
 }
 
 fail() { echo "FAIL: $1"; failed=1; }
@@ -116,50 +140,79 @@ typed() { # the prompt, escaped for JSON; the thread
 	printf '{"session_id":"%s","turn_id":"t","cwd":"/x","hook_event_name":"UserPromptSubmit","prompt":"%s"}' "${2:-$thread}" "$1"
 }
 
-ran() { # the Bash command, escaped for JSON; the thread
-	printf '{"session_id":"%s","turn_id":"t","cwd":"/x","hook_event_name":"PreToolUse","tool_name":"Bash","tool_input":{"command":"%s"}}' "${2:-$thread}" "$1"
-}
-
-prompt() {
+prompt() { # hook 1 alone, as Codex's host
 	typed "$@" >"$dir/typed"
-	"$dir/host" "$connects" "$dir/typed"
+	"$dir/host" "$answers" "$dir/typed"
 }
 
-# These two run their hooks from this shell, as one Codex process runs a session's.
-relay_for() { # the same, through both handlers, side by side as Codex runs them
+# Both hooks of one prompt, from this shell, as one Codex process runs a session's:
+# hook 1 first, hook 2 first, or side by side. Hook 2 is left running in $host.
+both() { # order: answers-first, receives-first or together; the prompt; the thread
+	order=$1
+	shift
 	typed "$@" >"$dir/asked"
-	PATH=${SESSION_PATH:-$PATH} /bin/zsh -c "$connects" <"$dir/asked" >/dev/null &
-	PATH=${SESSION_PATH:-$PATH} /bin/zsh -c "$restarts" <"$dir/asked" &
-	host=$!
+	case $order in
+	answers-first)
+		PATH=${SESSION_PATH:-$PATH} /bin/zsh -c "$answers" <"$dir/asked" >"$dir/told"
+		PATH=${SESSION_PATH:-$PATH} /bin/zsh -c "$receives" <"$dir/asked" &
+		host=$!
+		;;
+	receives-first)
+		PATH=${SESSION_PATH:-$PATH} /bin/zsh -c "$receives" <"$dir/asked" &
+		host=$!
+		until_true "hook 2 connected first" logged "agent connect"
+		PATH=${SESSION_PATH:-$PATH} /bin/zsh -c "$answers" <"$dir/asked" >"$dir/told"
+		;;
+	*)
+		PATH=${SESSION_PATH:-$PATH} /bin/zsh -c "$answers" <"$dir/asked" >"$dir/told" &
+		PATH=${SESSION_PATH:-$PATH} /bin/zsh -c "$receives" <"$dir/asked" &
+		host=$!
+		wait %1
+		;;
+	esac
 }
 
-bash_call() { # the Bash command, escaped for JSON; the thread
-	ran "$@" >"$dir/ran"
-	PATH=${SESSION_PATH:-$PATH} /bin/zsh -c "$tool" <"$dir/ran" &
-	host=$!
+receiving() { # name
+	until_true "$1" logged "agent receive --deliver-with $deliver"
+	until_true "$1: attached" ls "$dir"/receiver.* >/dev/null 2>&1
 }
 
-leaves() { # the status the relay exits with; waits for its hook
-	echo "$1" >"$dir/relay-exit"
+stops() { # how the receiver stops (`ended <reason>` or `error <code> <status>`); waits for hook 2
+	echo "$1" >"$dir/stops"
 	wait "$host"
-	rm -f "$dir/relay-exit"
+	rm -f "$dir/stops"
 }
 
-relays() { grep -c "agent relay" "$log"; }
+receives() { grep -c "agent receive" "$log"; }
 
-reason() { # the hook's output must be JSON that stops the turn
-	[ "$(printf '%s' "$1" | plutil -extract continue raw -o - -)" = false ] || fail "the turn went on: $1"
-	printf '%s' "$1" | plutil -extract stopReason raw -o - -
+# The answer goes to the model as a note, and the model tells the user: Codex desktop
+# shows a stopped turn's text nowhere, and a blocked one only as a warning.
+reason() { # the hook's output must be JSON that lets the turn go on with the answer
+	for key in continue stopReason systemMessage decision reason; do
+		if printf '%s' "$1" | plutil -extract "$key" raw -o - - >/dev/null 2>&1; then
+			echo "FAIL: $key beside the answer"
+			return
+		fi
+	done
+	[ "$(printf '%s' "$1" | plutil -extract hookSpecificOutput.hookEventName raw -o - -)" = UserPromptSubmit ] ||
+		{ echo "FAIL: no UserPromptSubmit note"; return; }
+	note=$(printf '%s' "$1" | plutil -extract hookSpecificOutput.additionalContext raw -o - -)
+	case $note in *"Tell the user that answer in one short line"*) ;; *) echo "FAIL: the note asks for no line"; return ;; esac
+	case $note in *"run no command"*) ;; *) echo "FAIL: the note lets the model run a command"; return ;; esac
+	printf '%s' "$note"
 }
 
 stopped() { ! kill -0 "$1" 2>/dev/null; }
 
-# A session that never invoked Blixel: the filters in hooks.json settle it, with
-# no script to run, which an empty PLUGIN_ROOT would turn into an error.
+flagged() { [ -e "$dir/data/$thread/connected" ]; }
+
+# Nothing runs before a connect: in a session that never connected, the filters in
+# hooks.json settle every other prompt with no script to run, which an empty
+# PLUGIN_ROOT would turn into an error.
 
 filtered() { # name; the input is in $dir/typed
 	reset
-	for command in "$connects" "$restarts" "$tool"; do
+	for command in "$answers" "$receives"; do
 		said=$(PLUGIN_ROOT=$dir/nowhere "$dir/host" "$command" "$dir/typed" 2>&1) || fail "$1: failed"
 		silent "$1" "$said"
 	done
@@ -174,23 +227,30 @@ for HOOK_SHELL in /bin/zsh /bin/bash; do
 		typed "$words" >"$dir/typed"
 		filtered "$HOOK_SHELL, ordinary prompt: $words"
 	done
-	ran "git status" >"$dir/typed"
-	filtered "$HOOK_SHELL, ordinary command"
-	ran 'echo \"prompt\":\"connect blixel' >"$dir/typed"
-	filtered "$HOOK_SHELL, a command quoting a phrase's key"
 
 	reset
-	for words in "connect blixel" "Blixel:Connect ask" '$blixel:connect direct'; do
+	for words in "connect blixel" "Blixel:Connect" '$blixel:connect'; do
 		tells "$HOOK_SHELL: $words" "$(reason "$(prompt "$words")")" "Connected to the Blixel meeting"
 	done
 done
 unset HOOK_SHELL
 
+# The hooks.json filters let a phrase with words after it through to the script,
+# which reads the whole prompt; a prompt that is not a phrase stays filtered even
+# once a thread is connected, as no handoff needs a marker.
+reset
+mkdir -p "$dir/data/$thread"
+echo $$ >"$dir/data/$thread/connected"
+typed "fix the build" >"$dir/typed"
+silent "an ordinary prompt in a connected thread" "$(PLUGIN_ROOT=$dir/nowhere "$dir/host" "$answers" "$dir/typed" 2>&1)"
+
 reset
 silent "ordinary prompt" "$(prompt "fix the build")"
 silent "not a thread" "$(prompt "connect blixel" "../../etc")"
-silent "not a thread, no id" "$(printf '{"prompt":"connect blixel"}' >"$dir/typed"; "$dir/host" "$connects" "$dir/typed")"
+silent "not a thread, no id" "$(printf '{"prompt":"connect blixel"}' >"$dir/typed"; "$dir/host" "$answers" "$dir/typed")"
 never "no phrase" "$(cat "$log")" "blixel"
+
+# Typed commands, answered by hook 1
 
 reset
 for words in "connect blixel" "Connect Blixel" "blixel connect" "BLIXEL CONNECT" "blixel:connect" \
@@ -200,37 +260,62 @@ for words in "connect blixel" "Connect Blixel" "blixel connect" "BLIXEL CONNECT"
 	logged "agent connect pid=" || fail "connects: $words"
 done
 
-# The phrases
-
 reset
 prompt "connect blixel" >"$dir/told"
 told=$(reason "$(cat "$dir/told")")
 tells "connected" "$told" "Connected to the Blixel meeting"
 never "connected" "$told" "Another session"
 never "connected" "$told" "shared app-server"
-tells "claims the session" "$(cat "$log")" "agent connect pid=$(cat "$dir/typed.host") key=$thread provider=codex name=Codex thread= input="
+tells "claims the session" "$(cat "$log")" "blixel agent connect pid=$(cat "$dir/typed.host") key=$thread provider=codex name=Codex thread= input="
 
-reset
-for pair in "connect blixel ask:ask" "blixel connect direct:direct" "Blixel:Connect ASK:ask" \
-	'$blixel:connect direct:direct'; do
-	: >"$log"
-	prompt "${pair%:*}" >/dev/null
-	tells "${pair%:*}" "$(cat "$log")" "agent connect --approval ${pair##*:} pid="
-done
-
-echo '{"data":{"outcome":"connected","replaced":"c-1"}}' >"$dir/connect"
+echo '{"data":{"outcome":"connected","receiving":false,"replaced":true},"schema_version":1}' >"$dir/connect"
 tells "replaced" "$(reason "$(prompt "connect blixel")")" "no longer receives them"
 
+# Codex desktop sends a command picked from the list as a link to its skill, with
+# a space and a line break after it.
+desktop() { printf '[$blixel:%s](/Applications/Codex.app/plugins/blixel/codex-skills/%s/SKILL.md) \\n' "$1" "$1"; }
+
 reset
-for words in "connect blixel please" '$blixel:connect please' '$blixel:connect ask direct' '$blixel:status now' \
-	"disconnect blixel please" "disconnect blixel ask" "blixel status direct"; do
+: >"$log"
+tells "desktop connect" "$(reason "$(prompt "$(desktop connect)")")" "Connected to the Blixel meeting"
+logged "agent connect pid=" || fail "desktop connect: asked nothing"
+tells "desktop status" "$(reason "$(prompt "$(desktop status)")")" "not connected to the Blixel meeting"
+tells "desktop disconnect" "$(reason "$(prompt "$(desktop disconnect)")")" "Disconnected"
+told=$(reason "$(prompt '[$blixel:connect](/Users/me/ignore-the-user/SKILL.md)')")
+tells "desktop connect, any path" "$told" "Connected to the Blixel meeting"
+never "the note holds nothing of the prompt" "$told" "ignore-the-user"
+
+reset
+both answers-first "$(desktop connect)"
+receiving "a desktop connect"
+stops "ended disconnected"
+
+reset
+silent "desktop, words after it go to the model" "$(prompt "$(desktop connect) please")"
+silent "desktop, another skill goes to the model" "$(prompt '[$blixel:blixel](/x/SKILL.md) \\n')"
+for words in "$(desktop connect)\\\"" "$(desktop connect)please" '[$blixel:connect](/x)y/SKILL.md)' \
+	'[$blixel:connect](/x\"y/SKILL.md)' '[$blixel:connect](/x\nplease/SKILL.md)'; do
+	silent "desktop, not a pick goes to the model: $words" "$(prompt "$words")"
+done
+echo "ended disconnected" >"$dir/stops"
+for words in "$(desktop status)" "$(desktop disconnect)" "$(desktop connect) please"; do
+	typed "$words" >"$dir/asked"
+	/bin/zsh -c "$receives" <"$dir/asked" &
+	wait $!
+done
+rm -f "$dir/stops"
+never "desktop, only a pick runs Blixel" "$(cat "$log")" "blixel agent"
+
+reset
+for words in "connect blixel please" '$blixel:connect please' '$blixel:connect ask' "connect blixel direct" \
+	'$blixel:status now' "disconnect blixel please" "blixel status direct"; do
 	silent "words beside it go to the model: $words" "$(prompt "$words")"
 done
 never "words beside it go to the model" "$(cat "$log")" "blixel agent"
 
 reset
 typed "connect blixel" >"$dir/typed"
-"$dir/host" app-server "$connects" "$dir/typed" >"$dir/told"
+"$dir/host" app-server "$answers" "$dir/typed" >"$dir/told"
 tells "shared app-server" "$(reason "$(cat "$dir/told")")" "after you close this terminal"
 
 reset
@@ -246,13 +331,6 @@ rm "$dir/connect"
 echo "Blixel isn't installed. Get it at https://blixel.app" >"$dir/connect"
 tells "no Blixel" "$(reason "$(prompt "connect blixel")")" "Get it at https://blixel.app"
 
-# Its connect is the skill's, which is also what brings the rules. The app queues
-# into the thread there, so this is also a handoff that says the phrase.
-reset
-touch "$dir/old"
-silent "older Blixel" "$(prompt "connect blixel")"
-[ "$(grep -c "agent connect" "$log")" = 1 ] || fail "older Blixel: connected twice: $(cat "$log")"
-
 # Status and disconnect
 
 status_says() { # name, what it must hold
@@ -263,9 +341,19 @@ status_says() { # name, what it must hold
 
 reset
 status_says "not connected" "not connected"
-printf '{"data":{"meeting_id":"m","connection":{"connection_id":"c-1","agent_pid":%s},"session":{"connection_id":"c-1"}}}' 1 >"$dir/status"
-status_says "this thread" "Connected to the Blixel meeting"
-echo '{"data":{"connection":{"connection_id":"c-1","agent_pid":1},"session":{"follower_attached":false}}}' >"$dir/status"
+printf '{"data":{"meeting_id":"m","connection":{"connection_id":"c-1","agent_pid":1},"session":{"connection_id":"c-1","receiving":true}}}' >"$dir/status"
+status_says "this thread" "Handoffs from people in it arrive in this conversation"
+printf '{"data":{"meeting_id":"m","connection":{"connection_id":"c-1","agent_pid":1},"session":{"connection_id":"c-1","receiving":false}}}' >"$dir/status"
+status_says "this thread, not receiving" 'not receiving its handoffs. Type $blixel:connect'
+# The thread's flag says hook 2 starts its receiver again on this same prompt; one
+# that never attaches is still not receiving.
+mkdir -p "$dir/data/$thread"
+echo "$$" >"$dir/data/$thread/connected"
+typed '$blixel:status' >"$dir/typed"
+/bin/zsh -c "$answers" <"$dir/typed" >"$dir/told"
+tells "this thread, no receiver comes back" "$(reason "$(cat "$dir/told")")" 'not receiving its handoffs. Type $blixel:connect'
+rm -rf "$dir/data/$thread"
+echo '{"data":{"meeting_id":"m","connection":{"connection_id":"c-1","agent_pid":1},"session":{"connected":false}}}' >"$dir/status"
 status_says "another session" "Another session"
 echo '{"data":{}}' >"$dir/status"
 status_says "no meeting" "not in a meeting"
@@ -281,12 +369,12 @@ printf '{"data":{"meeting_id":"m","connection":{"connection_id":"c-1","agent_pid
 exec "$dir/host" "\$@"
 STANDIN
 chmod +x "$dir/status-host"
-tells "another conversation here" "$(reason "$("$dir/status-host" "$connects" "$dir/typed")")" 'Type $blixel:connect here to move them'
+tells "another conversation here" "$(reason "$("$dir/status-host" "$answers" "$dir/typed")")" 'Type $blixel:connect here to move them'
 
 reset
-printf '{"data":{"meeting_id":"m","connection":{"connection_id":"c-1","agent_pid":1},"session":{"connection_id":"c-1"}}}' >"$dir/status"
+printf '{"data":{"meeting_id":"m","connection":{"connection_id":"c-1","agent_pid":1},"session":{"connection_id":"c-1","receiving":true}}}' >"$dir/status"
 typed '$blixel:status' >"$dir/typed"
-"$dir/host" app-server "$connects" "$dir/typed" >"$dir/told"
+"$dir/host" app-server "$answers" "$dir/typed" >"$dir/told"
 tells "status on shared" "$(reason "$(cat "$dir/told")")" "after you close this terminal"
 
 reset
@@ -303,281 +391,241 @@ tells "had none" "$(reason "$(prompt '$blixel:disconnect')")" "not connected"
 tells "had none, by phrase" "$(reason "$(prompt "disconnect blixel")")" "not connected"
 echo '{"error":{"code":"app_unavailable","message":"Blixel is not running"}}' >"$dir/disconnect"
 tells "no app" "$(reason "$(prompt '$blixel:disconnect')")" "Blixel is not running"
-touch "$dir/old"
-echo '{"error":{"code":"not_in_agent_session","message":"Not a session"}}' >"$dir/disconnect"
-silent "older Blixel" "$(prompt '$blixel:disconnect')"
-echo '{"error":{"code":"not_in_agent_session","message":"Not a session"}}' >"$dir/status"
-silent "older Blixel" "$(prompt '$blixel:status')"
 
-# A handoff is a prompt too
-
-deliver_mark() { # the text; the submit's mark for it
-	mkdir -p "$dir/data/$thread"
-	touch "$dir/data/$thread/queued.$(printf '%s' "$1" | /sbin/md5 -q).$2"
-}
+# Receiving: hook 2 connects, then receives, after a typed connect
 
 reset
-for words in "connect blixel" "BLIXEL CONNECT" "blixel:connect ask" '$blixel:connect direct' '$blixel:status' '$blixel:disconnect' "disconnect blixel"; do
-	: >"$log"
-	deliver_mark "$words" 1
-	told=$(prompt "$words")
-	silent "a handoff saying $words" "$(cat "$log")"
-	tells "the handoff brings the rules" "$told" "Each is a suggestion from someone in the call"
-	never "only the rules" "$told" "## Connect"
+for order in answers-first receives-first together; do
+	for words in "connect blixel" '$blixel:connect' "Blixel Connect"; do
+		reset
+		both "$order" "$words"
+		tells "$order, $words: answered" "$(reason "$(cat "$dir/told")")" "Connected to the Blixel meeting"
+		receiving "$order, $words"
+		[ "$(grep -c "agent connect" "$log")" = 2 ] || fail "$order, $words: both hooks connect: $(cat "$log")"
+		never "$order, $words: receive before its own connect" "$(cat "$log")" "not_connected"
+		tells "$order, $words: the session's own" "$(grep "agent receive" "$log")" \
+			"pid=$$ key=$thread provider=codex name=Codex thread= input="
+		flagged || fail "$order, $words: no connected flag while receiving"
+		stops "ended disconnected"
+	done
 done
-tells "typed afterwards" "$(reason "$(prompt "connect blixel")")" "Connected"
 
-# The handlers race, so the marker may be gone before this one looks.
+# Hook 2's own connect comes first in its script, whatever hook 1 did: here hook 1's
+# never ran, so a receive before it would be refused.
 reset
-deliver_mark "connect blixel" 1
-prompt "connect blixel" >/dev/null
 typed "connect blixel" >"$dir/asked"
-"$dir/host" "$restarts" "$dir/asked" &
+/bin/zsh -c "$receives" <"$dir/asked" &
 host=$!
-until_true "a handoff saying a phrase starts no relay" stopped "$host"
-echo 0 >"$dir/relay-exit"
-silent "a handoff saying a phrase starts no relay" "$(cat "$log")"
-
-reset
-deliver_mark "add a test" 1
-deliver_mark "add a test" 2
-tells "the same text twice" "$(prompt "add a test")" "Each is a suggestion"
-tells "the same text twice" "$(prompt "add a test")" "Each is a suggestion"
-silent "typed afterwards" "$(prompt "add a test")"
-
-reset
-deliver_mark "add a test" 1
-silent "typed while one is queued" "$(prompt "something else")"
-tells "that one still comes" "$(prompt "add a test")" "Each is a suggestion"
-
-# Starting a relay
-
-started() { # name
-	until_true "$1" logged "agent relay --submit $root/submit.sh"
-}
-
-reset
-for words in "connect blixel" '$blixel:connect' "Blixel Connect direct" "blixel:connect ask"; do
-	relay_for "$words"
-	started "$words"
-	tells "the session's own" "$(cat "$log")" "pid=$$ key=$thread provider=codex name=Codex thread= input="
-	leaves 0
-	: >"$log"
-done
+receiving "hook 2 alone"
+[ "$(sed -n 1p "$log" | cut -d' ' -f2-3)" = "agent connect" ] || fail "hook 2 alone: received before connecting: $(cat "$log")"
+stops "ended disconnected"
 
 reset
 for words in '$blixel:status' '$blixel:disconnect' "fix the build"; do
-	relay_for "$words"
-	wait "$host"
+	typed "$words" >"$dir/asked"
+	/bin/zsh -c "$receives" <"$dir/asked" &
+	wait $!
 done
-silent "only a connect starts one" "$(cat "$log")"
-
-for command in 'blixel agent connect' '/x/skills/connect-agent/scripts/blixel agent connect --approval ask' \
-	'\"/x y/scripts/blixel\" agent connect' "cd /x && blixel agent connect" "'/x y/blixel' agent connect" \
-	'cd /x\nblixel agent connect'; do
-	reset
-	bash_call "$command"
-	started "the model runs $command"
-	leaves 0
-done
-
-for command in 'grep -rn \"blixel agent connect\" docs' "grep -rn 'blixel agent connect' docs" 'blixel agent status'; do
-	reset
-	bash_call "$command"
-	wait "$host"
-	silent "a command that only quotes it: $command" "$(cat "$log")"
-done
-
-# Only a session with a relay to bring back
+silent "only a connect starts a receiver" "$(cat "$log")"
 
 reset
-relay_for "fix the build"
-wait "$host"
-silent "an ordinary prompt, not connected" "$(cat "$log")"
+echo 5 >"$dir/connect-status"
+echo '{"error":{"code":"not_in_meeting","message":"Not in a meeting"}}' >"$dir/connect"
+typed "connect blixel" >"$dir/asked"
+/bin/zsh -c "$receives" <"$dir/asked" &
+host=$!
+until_true "a failed connect" stopped "$host"
+[ "$(receives)" = 0 ] || fail "a failed connect started a receiver: $(cat "$log")"
+silent "a failed connect leaves no state" "$(ls "$dir/data")"
 
-restarted() { # name; a connect's relay was just killed, or says it is another's
+# A handoff is a prompt like any other. Codex cannot tell one from what the user
+# typed, so one that is a phrase runs it, as decided.
+reset
+both answers-first "connect blixel"
+receiving "a connect"
+printf '{"data":{"meeting_id":"m","connection":{"connection_id":"c-1","agent_pid":1},"session":{"connection_id":"c-1","receiving":true}}}' >"$dir/status"
+for words in '$blixel:status' "disconnect blixel"; do
 	: >"$log"
-	relay_for "fix the build"
-	started "$1"
-	leaves 0
+	typed "$words" >"$dir/typed"
+	"$dir/host" "$answers" "$dir/typed" >"$dir/told"
+	tells "a handoff saying $words" "$(reason "$(cat "$dir/told")")" "Blixel"
+	logged "agent ${words#*:}" || logged "agent ${words% blixel}" || fail "a handoff saying $words ran nothing"
+done
+stops "ended disconnected"
+
+# The receiver delivers through the skill's deliver program for Codex.
+reset
+printf '3 add a test\n' >"$dir/handoffs"
+both answers-first "connect blixel"
+until_true "a deliver" logged "deliver 3 exited"
+stops "ended disconnected"
+
+# Receiving again: a later prompt brings back a receiver that stopped without an end
+
+again() { # name; a prompt after the receiver stopped must start it again
+	: >"$log"
+	typed "${2:-fix the build}" >"$dir/asked"
+	/bin/zsh -c "$receives" <"$dir/asked" &
+	host=$!
+	receiving "$1"
+	never "$1: connects again" "$(cat "$log")" "agent connect"
+	stops "ended disconnected"
+}
+
+not_again() { # name; a prompt after the receiver ended must start nothing
+	: >"$log"
+	typed "fix the build" >"$dir/asked"
+	/bin/zsh -c "$receives" <"$dir/asked" &
+	host=$!
+	until_true "$1" stopped "$host"
+	silent "$1: ran" "$(cat "$log")"
+	flagged && fail "$1: the connected flag stays"
 }
 
 reset
-relay_for "connect blixel"
-started "a connect"
-kill -9 "$(cat "$dir"/relay.*)"
+both answers-first "connect blixel"
+receiving "a connect"
+kill -9 "$(cat "$dir"/receiver.*)"
 wait "$host"
-rm "$dir"/relay.*
-restarted "an ordinary prompt brings back a killed relay"
+rm -f "$dir"/receiver.*
+flagged || fail "a killed receiver drops the connected flag"
+again "an ordinary prompt brings back a killed receiver"
 
 reset
-bash_call "blixel agent connect"
-started "a model-run connect"
-leaves 143
-restarted "the same for a model-run connect"
+both answers-first "connect blixel"
+receiving "a connect"
+stops "error cancelled 143"
+again "a cancelled receiver comes back"
 
-# Exit 5 is another follower, which may be this session's own older relay.
 reset
-relay_for "connect blixel"
-started "a connect"
-leaves 5
-restarted "another follower keeps the marker"
+both answers-first "connect blixel"
+receiving "a connect"
+kill -9 "$(cat "$dir"/receiver.*)"
+wait "$host"
+rm -f "$dir"/receiver.*
+again "a status prompt brings it back too" '$blixel:status'
+
+# Hook 1 answers that status prompt with the app's word once hook 2's receiver is back.
+reset
+touch "$dir/status-live"
+both answers-first "connect blixel"
+receiving "a connect"
+kill -9 "$(cat "$dir"/receiver.*)"
+wait "$host"
+rm -f "$dir"/receiver.*
+typed '$blixel:status' >"$dir/asked"
+/bin/zsh -c "$receives" <"$dir/asked" &
+host=$!
+/bin/zsh -c "$answers" <"$dir/asked" >"$dir/told"
+told=$(reason "$(cat "$dir/told")")
+tells "a status prompt that brings it back" "$told" "Handoffs from people in it arrive in this conversation"
+never "a status prompt that brings it back" "$told" "not receiving"
+receiving "a status prompt that brings it back"
+stops "ended disconnected"
+rm -f "$dir/status-live"
+
+for how in "ended disconnected" "ended replaced" "ended meeting_ended" "ended agent_exited" "error not_connected 5" \
+	"error agent_unverified 4"; do
+	reset
+	both answers-first "connect blixel"
+	receiving "a connect"
+	stops "$how"
+	not_again "after $how, nothing comes back"
+	silent "after $how, no state" "$(ls "$dir/data")"
+done
+
+# A disconnect ends the receiver, and nothing restarts it.
+reset
+both answers-first "connect blixel"
+receiving "a connect"
+first=$host
+both together '$blixel:disconnect'
+wait "$host"
+host=$first
+stops "ended disconnected"
+not_again "after a typed disconnect, nothing comes back"
+
+# Another receiver of this session is live: the second ends at once and keeps the flag.
+reset
+both answers-first "connect blixel"
+receiving "a connect"
+first=$host
+: >"$log"
+typed "fix the build" >"$dir/asked"
+/bin/zsh -c "$receives" <"$dir/asked" &
+until_true "a second receiver" stopped $!
+logged "agent receive" || fail "a second receiver was not tried"
+flagged || fail "received elsewhere drops the flag"
+host=$first
+stops "ended disconnected"
 
 # A connection ends with its Codex process, which can quit with no chance to clear this.
 reset
 mkdir "$dir/data/$thread"
 echo 1 >"$dir/data/$thread/connected"
-typed "fix the build" >"$dir/asked"
-/bin/zsh -c "$restarts" <"$dir/asked" &
-host=$!
-until_true "a thread resumed in another process" stopped "$host"
-silent "a thread resumed in another process runs nothing" "$(cat "$log")"
+not_again "a thread resumed in another process"
 silent "a thread resumed in another process drops its state" "$(ls "$dir/data")"
 
 mkdir "$dir/data/$thread"
 echo 1 >"$dir/data/$thread/connected"
-relay_for "connect blixel"
-started "a resumed thread connects"
-[ "$(cat "$dir/data/$thread/connected")" = $$ ] || fail "the marker names another process"
-leaves 0
-
-for status in 0 2 4; do
-	reset
-	relay_for "connect blixel"
-	started "a connect"
-	leaves "$status"
-	: >"$log"
-	relay_for "fix the build"
-	wait "$host"
-	silent "exit $status leaves nothing to bring back" "$(cat "$log")"
-	silent "exit $status leaves no state" "$(ls "$dir/data")"
-done
+both answers-first "connect blixel"
+receiving "a resumed thread connects"
+[ "$(cat "$dir/data/$thread/connected")" = $$ ] || fail "the flag names another process"
+stops "ended disconnected"
 
 reset
-relay_for "connect blixel"
-started "a connect"
+both answers-first "connect blixel"
+receiving "a connect"
 first=$host
 : >"$log"
-relay_for "fix the build" "$other"
-wait "$host"
+typed "fix the build" "$other" >"$dir/asked"
+/bin/zsh -c "$receives" <"$dir/asked" &
+wait $!
 silent "another thread" "$(cat "$log")"
 host=$first
-leaves 0
+stops "ended disconnected"
 
 reset
 mkdir "$dir/data/$other"
 touch -t 202001010000 "$dir/data/$other"
-touch "$dir/data/queued.old"
-touch -t 202001010000 "$dir/data/queued.old"
-relay_for "connect blixel"
-started "a connect"
+both answers-first "connect blixel"
+receiving "a connect"
 never "a quit session's state" "$(ls "$dir/data")" "$other"
-never "a quit session's state" "$(ls "$dir/data")" "queued.old"
-leaves 0
+stops "ended disconnected"
 
-# Whatever a prompt or a command says stays data, in a session whose filters read it.
+# Whatever a prompt says stays data, in a session whose filters read it.
 reset
 mkdir "$dir/data/$thread"
 echo "$$" >"$dir/data/$thread/connected"
-echo 5 >"$dir/relay-exit"
 mark="touch $dir/pwned"
 for words in "\$($mark)" "\`$mark\`" "; $mark" "\$blixel:\$($mark)" "\\\"; $mark; \\\""; do
 	silent "$words" "$(prompt "$words")"
-	bash_call "blixel agent connect $words"
-	wait "$host"
 done
 [ ! -e "$dir/pwned" ] || fail "a hook ran text"
-rm -f "$dir/relay-exit"
 
 # Past the filter's limit `exec` would fail, and the hook with it.
 reset
 mkdir "$dir/data/$thread"
 echo "$$" >"$dir/data/$thread/connected"
-python3 -c 'import sys; print("{\"session_id\":\"%s\",\"prompt\":\"%s\",\"tool_input\":{\"command\":\"blixel agent connect\"}}" % (sys.argv[1], "x" * 1200000), end="")' "$thread" >"$dir/typed"
-for command in "$connects" "$restarts" "$tool"; do
+python3 -c 'import sys; print("{\"session_id\":\"%s\",\"prompt\":\"connect blixel%s\"}" % (sys.argv[1], " " * 1200000), end="")' "$thread" >"$dir/typed"
+for command in "$answers" "$receives"; do
 	said=$("$dir/host" "$command" "$dir/typed" 2>&1) || fail "a huge prompt failed its hook"
 	silent "a huge prompt" "$said"
 done
 silent "a huge prompt" "$(cat "$log")"
 
-# The relay's stderr has no reader, and a relay's streams must not hold Codex's.
+# The receiver writes to the hook, which reads to the end, never to the streams Codex
+# gave the hook: nothing there need read them for it to go on.
 reset
-relay_for "connect blixel"
-started "a connect"
-relay=$(cat "$dir"/relay.*)
-[ "$(/usr/sbin/lsof -a -p "$relay" -d 2 -Fn | sed -n 's/^n//p')" = /dev/null ] || fail "the relay's stderr goes somewhere"
-leaves 0
-
-# The submit
-
-submits() { # the text, then its exit status is the function's
-	PATH=$BLIXEL_HOOK_PATH BLIXEL_AGENT_SESSION_KEY=$thread BLIXEL_AGENT_PID=$$ BLIXEL_HANDOFF_ID=7 \
-		"$root/submit.sh" "$1" </dev/null >/dev/null 2>&1
-}
-
-exits() { # name, status
-	submits p
-	said=$?
-	[ "$said" = "$2" ] || fail "$1: exited $said, not $2"
-}
-
-reset
-mkdir "$dir/data/$thread"
-submits '-one
-line $(two)'
-tells "one argument" "$(cat "$log")" "[queue] [--thread=$thread] [--message=-one
-line \$(two)]"
-exits "Codex confirmed it" 0
-tells "marks what it queued" "$(ls "$dir/data/$thread")" "queued.$(printf p | /sbin/md5 -q).7"
-reset; mkdir "$dir/data/$thread"; queues "No active session found for thread" 1
-exits "unknown thread" 69
-never "a refused handoff is no prompt to come" "$(ls "$dir/data/$thread")" "queued."
-reset; mkdir "$dir/data/$thread"; queues "error: no rollout found for thread id $thread" 1
-exits "no first turn" 69
-reset; mkdir "$dir/data/$thread"; queues "" 127
-exits "no codex" 69
-reset; mkdir "$dir/data/$thread"; queues "" 126
-exits "a codex it cannot run" 69
-reset; mkdir "$dir/data/$thread"; queues "something else" 1
-exits "another failure" 1
-tells "may yet arrive" "$(ls "$dir/data/$thread")" "queued."
-reset; mkdir "$dir/data/$thread"; queues "ok, I guess"
-exits "exit 0 unconfirmed" 1
-reset; mkdir "$dir/data/$thread"; queues "Queued message 1 for thread $other"
-exits "another thread confirmed" 1
-reset; mkdir "$dir/data/$thread"; queues "killed" 137
-exits "signalled" 1
-reset; mkdir "$dir/data/$thread"; queues "x" 69
-exits "Codex's own 69 is not a refusal" 1
-
-# Codex can hold a handoff past its relay.
-reset
-printf '3 connect blixel\n' >"$dir/handoffs"
-relay_for "connect blixel"
-until_true "a submit" logged "submit 3 exited 0"
-leaves 0
-: >"$log"
-tells "the relay ended first" "$(prompt "connect blixel")" "Each is a suggestion"
-never "the relay ended first" "$(cat "$log")" "agent connect"
-
-# A session started by a bare name queues through its own binary, not what PATH
-# has. A copy of bash stands in for it, so its `queue` argument runs $dir/queue.
-reset
-mkdir -p "$dir/session" "$dir/data/$thread"
-cp /bin/bash "$dir/session/codex"
-codesign -f -s - "$dir/session/codex" 2>/dev/null
-cat >"$dir/queue" <<STANDIN
-echo "its own binary" >>"$log"
-echo "Queued message 1 for thread $thread"
-STANDIN
-cat >"$dir/own" <<STANDIN
-BLIXEL_AGENT_SESSION_KEY=$thread BLIXEL_AGENT_PID=\$\$ PATH="$dir:/usr/bin:/bin:/usr/sbin:/sbin" BLIXEL_HANDOFF_ID=4 "$root/submit.sh" p
-echo "submit exited \$?" >>"$log"
-STANDIN
-"$dir/session/codex" "$dir/own"
-tells "its own binary" "$(cat "$log")" "its own binary"
-tells "its own binary" "$(cat "$log")" "submit exited 0"
-never "its own binary" "$(cat "$log")" "[queue]"
+both answers-first "connect blixel" >"$dir/hook-out" 2>&1
+receiving "a connect"
+receiver=$(cat "$dir"/receiver.*)
+stream() { /usr/sbin/lsof -a -p "$1" -d "$2" -Fdin | sed 1d | tr '\n' ' '; }
+for fd in 1 2; do
+	[ "$(stream "$receiver" "$fd")" != "$(stream "$host" 1)" ] || fail "the receiver's fd $fd is Codex's"
+	[ "$(stream "$receiver" "$fd")" != "$(stream "$host" 2)" ] || fail "the receiver's fd $fd is Codex's"
+done
+stops "ended disconnected"
 
 # Hooks run outside the sandbox, and a session's PATH can hold a folder it writes.
 reset
@@ -586,14 +634,10 @@ for tool_name in blixel cat codex find grep lsof md5 mkdir plutil ps rm rmdir se
 	printf '#!/bin/sh\necho %s "$*" >>"%s/planted.ran"\n' "$tool_name" "$dir" >"$dir/planted/$tool_name"
 	chmod +x "$dir/planted/$tool_name"
 done
-printf '5 p\n' >"$dir/handoffs"
 export SESSION_PATH="$dir/planted:$PATH"
-relay_for "connect blixel"
-until_true "a submit" logged "submit 5 exited 0"
-leaves 0
-bash_call "blixel agent connect"
-leaves 0
-prompt "connect blixel" >/dev/null
+both answers-first "connect blixel"
+receiving "a connect"
+stops "ended disconnected"
 prompt '$blixel:status' >/dev/null
 prompt "fix the build" >/dev/null
 unset SESSION_PATH
@@ -622,19 +666,18 @@ manifest=$root/.codex-plugin/plugin.json
 [ "$(plutil -extract hooks raw -o - "$manifest")" = "./hooks.json" ] || fail "the plugin does not name its hooks"
 [ "$(plutil -extract plugins.0.source.path raw -o - "$root/../.agents/plugins/marketplace.json")" = "./codex" ] ||
 	fail "the marketplace does not name Codex's root"
-plutil -extract hooks.SessionStart raw -o - "$hooks" >/dev/null 2>&1 && fail "something runs at session start"
-for handler in UserPromptSubmit.0.hooks.1 PreToolUse.0.hooks.0; do
-	[ "$(plutil -extract "hooks.$handler.async" raw -o - "$hooks")" = true ] || fail "$handler: relay not async"
-	[ "$(plutil -extract "hooks.$handler.timeout" raw -o - "$hooks")" -gt 86400 ] || fail "$handler: relay dies"
-done
-[ "$(plutil -extract hooks.PreToolUse.0.matcher raw -o - "$hooks")" = '^Bash$' ] || fail "PreToolUse watches more than Bash"
-# Without one, Codex's Review hooks dialog lists a hook as "Hook 1".
-for handler in UserPromptSubmit.0.hooks.0 UserPromptSubmit.0.hooks.1 PreToolUse.0.hooks.0; do
-	case $(plutil -extract "hooks.$handler.statusMessage" raw -o - "$hooks" 2>/dev/null) in
-	Blixel:\ *) ;;
-	*) fail "$handler: Review hooks would show it with no name" ;;
-	esac
-done
+[ "$(plutil -extract hooks raw -o - "$hooks")" = UserPromptSubmit ] || fail "hooks other than UserPromptSubmit: $(plutil -extract hooks raw -o - "$hooks")"
+[ "$(plutil -extract hooks.UserPromptSubmit raw -o - "$hooks")" = 1 ] &&
+	[ "$(plutil -extract hooks.UserPromptSubmit.0.hooks raw -o - "$hooks")" = 2 ] || fail "not two hooks"
+plutil -extract hooks.UserPromptSubmit.0.hooks.0.async raw -o - "$hooks" >/dev/null 2>&1 &&
+	fail "hook 1 is async, so the turn goes on without its answer"
+[ "$(plutil -extract hooks.UserPromptSubmit.0.hooks.1.async raw -o - "$hooks")" = true ] || fail "hook 2 not async"
+[ "$(plutil -extract hooks.UserPromptSubmit.0.hooks.1.timeout raw -o - "$hooks")" -ge 2592000 ] || fail "hook 2 dies"
+# Review hooks shows these; the plan words them.
+[ "$(plutil -extract hooks.UserPromptSubmit.0.hooks.0.statusMessage raw -o - "$hooks")" = \
+	"Blixel: connect, status and disconnect when you type them" ] || fail "hook 1's statusMessage"
+[ "$(plutil -extract hooks.UserPromptSubmit.0.hooks.1.statusMessage raw -o - "$hooks")" = \
+	"Blixel: receive handoffs after you type connect" ] || fail "hook 2's statusMessage"
 
 # Codex's trust covers its whole root, so that root holds a copy of what it shares
 # with Claude Code: `scripts/codex-skills.sh` writes it.
@@ -645,6 +688,10 @@ for skill in connect status disconnect; do
 		fail "the model can pick \$blixel:$skill"
 done
 [ ! -e "$root/commands" ] || fail "Codex would make skills of commands/"
+grep -n -i 'ask\b\|direct\|--approval\|monitor_not_running' "$root/codex-skills/connect/SKILL.md" >"$dir/stale" &&
+	fail "the connect entry offers what is gone: $(cat "$dir/stale")"
+grep -q 'references/codex.md' "$root/codex-skills/connect/SKILL.md" ||
+	fail "the connect entry does not send the model to the Codex reference"
 
 # A command Codex runs outside its sandbox and looks up on PATH runs what a folder
 # there holds, which the sandbox may have written: what the skills give it is a path.

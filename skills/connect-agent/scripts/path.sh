@@ -1,5 +1,5 @@
 # Sourced first by each script that may run outside Claude Code's sandbox and runs
-# anything by name. Hooks, the plugin's monitor and the mod run there with the session's
+# anything by name. Hooks and the mod run there with the session's
 # PATH, which can hold a folder the sandbox writes, such as an active venv's, so nothing
 # may be found on it: not `plutil`, not `blixel`. Spotlight goes for the same reason, as
 # a workspace can hold a bundle with Blixel's id. BLIXEL_HOOK_PATH is for tests and

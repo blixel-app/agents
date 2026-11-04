@@ -1,6 +1,6 @@
 {
   "name": "blixel",
-  "version": "0.8.0",
+  "version": "0.9.0",
   "private": true,
   "description": "Rooms, meeting chat, window sharing, transcripts, hooks and agent handoffs through the blixel CLI.",
   "homepage": "https://blixel.app",

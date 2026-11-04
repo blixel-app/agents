@@ -1,6 +1,6 @@
 #!/bin/sh
 # The CLI for what runs outside the sandbox. The shim is sourced, not run, to save a
 # connect's calls a shell each. It ends in `exec`, so the pid stays the CLI's, as the
-# mod stops a follower by the pid it started.
+# mod stops a receiver by the pid it started.
 . "${0%/*}/path.sh"
 . "${0%/*}/blixel"
