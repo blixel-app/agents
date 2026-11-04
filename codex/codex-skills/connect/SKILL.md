@@ -5,7 +5,7 @@ description: Connect this session to the Blixel meeting, so people in it can han
 
 The plugin's hooks run `$blixel:connect` themselves. If a note from the Blixel plugin's
 hook in this turn gives its answer, tell the user that answer in one short line and run
-nothing: it is already connected, and connecting again does nothing more.
+nothing: the hook already connected, or found why it could not.
 
 With no such note, its hooks are not trusted or the prompt held other words. Connect as
 the blixel:connect-agent skill says, following its `references/codex.md`: run
