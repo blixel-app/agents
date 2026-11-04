@@ -5,14 +5,15 @@ Two things for coding agents on a Mac with [Blixel](https://blixel.app):
 - **Use Blixel from your agent.** The `blixel` skill drives the `blixel` CLI: rooms,
   chat, transcripts, window sharing, hooks. Any agent that reads `SKILL.md` skills can
   use it.
-- **Connect a session to a call.** People in the meeting speak or type a request, and
-  it arrives in your session as a handoff. This is `connect-agent`, and it works best
-  with the plugin for your agent.
+- **Connect a session to a call.** People in the meeting speak or type to your session,
+  and what they say arrives in it as a handoff. This is `connect-agent`. It works with the
+  skills alone in Claude Code, Codex and OpenCode; the plugin for your agent makes it
+  faster, and pi needs it.
 
 | Skill | What it does |
 | --- | --- |
 | [`blixel`](skills/blixel/SKILL.md) | Lists rooms and who is in them, checks the current meeting, reads, follows and posts to its chat, shares windows into it, searches, reads, exports or follows transcripts, and sets up hooks that run a command when something happens. |
-| [`connect-agent`](skills/connect-agent/SKILL.md) | Connects this session to your current meeting, so people in the call can hand it spoken or typed requests. |
+| [`connect-agent`](skills/connect-agent/SKILL.md) | Connects this session to your current meeting and receives its handoffs, so people in the call can speak or type to it. |
 
 ## Install
 
@@ -25,9 +26,10 @@ Two things for coding agents on a Mac with [Blixel](https://blixel.app):
 | Any other agent, or skills only | `npx skills add blixel-app/skills`, or copy `skills/blixel` into the agent's skills folder |
 
 Installing is the only setup: the plugin and the skills find Blixel's `blixel` command
-themselves. In Codex, also trust the plugin's hooks, as [below](#codex).
+themselves. In Codex, also trust the plugin's hooks, as [below](#codex). In OpenCode,
+restart its background service so it loads the plugin.
 
-The CLI needs Blixel 0.12 or later. Connecting a session needs 0.16 or later, in
+The CLI needs Blixel 0.12 or later. Connecting a session needs 0.17 or later, in
 `/Applications` or `~/Applications`.
 
 ## Use Blixel from your agent
@@ -50,51 +52,85 @@ To type `blixel` in your own terminal, install Blixel with Homebrew
 
 ## Connect a session to a call
 
-While Blixel is in a meeting, connect the session that should take requests. People in
-the call can then speak or type to it from Blixel. Each request arrives as a handoff,
-worded as the message you set in Blixel's Settings › Agents, the request alone by
-default.
+While Blixel is in a meeting, connect the session that should take handoffs. People in
+the call can then speak or type to it from Blixel, and each handoff arrives in the
+session as your own prompt, worded as the message you set in Blixel's Settings ›
+Agents, the handoff alone by default. The agent handles it as it would anything you
+typed. Whether Blixel shows you each handoff first is chosen in the app, in Settings ›
+Agents or the call's ✦ Agent menu, never by the agent.
 
-- The agent treats a handoff as a colleague's suggestion, not your instruction, and
-  asks you before anything destructive.
 - A meeting has one connected session: connecting another replaces it. Leaving the room
   ends the connection.
 - Nothing runs for Blixel in a session until you connect it, and everything stops when
   the connection ends.
 
-### Connect without a model turn
+### Connect, then receive
 
-With the plugin, you can connect, check and disconnect without calling a model, so it
-answers at once and spends no tokens. Two ways to say it:
+Connecting takes two of the CLI's commands. `blixel agent connect` connects the session
+and exits. `blixel agent receive` then keeps running in the background inside the agent
+and receives the handoffs. The plugin runs both for you; with the skills alone, the
+model runs `connect` and starts `receive` as a background command.
+
+A session can be connected and **not receiving**: it holds the meeting's connection,
+but no `receive` runs for it, so handoffs don't reach it. A handoff sent then waits up
+to 10 seconds for a receiver, and its sender hears it wasn't delivered. Blixel shows it
+under **My agent** in the ✦ Agent menu as **Not receiving**, and the status command or
+`blixel agent status` says so too. It happens when:
+
+- The agent can't run a background command, as pi without its package.
+- You declined the command that starts `receive`.
+- `receive` stopped, as when Claude Code ends a Monitor after 30 minutes and the model
+  hasn't started it again yet.
+
+To fix it, connect again (the command, or ask), which starts `receive`; install the
+plugin where the agent needs it; or disconnect.
+
+### Commands and phrases
+
+With the plugin, you can connect, check and disconnect without asking the model in
+words. Two ways to say it:
 
 - **The command:** `/blixel:connect`, `/blixel:status`, `/blixel:disconnect`. Codex has
   no plugin commands, so there it is `$blixel:connect` and so on: type `$con`, then
-  Enter twice.
+  Enter twice, or pick it from the `$` list in Codex desktop.
 - **A phrase, as a whole prompt in any case:** `connect blixel`, `blixel connect` or
   `blixel:connect`, and the same with `status` and `disconnect`. In OpenCode this works
   in its terminal, not in its web or desktop apps.
 
-Add `ask` or `direct` after connect to choose whether Blixel asks you before each
-handoff. A handoff that says one of these phrases doesn't run it: it reaches the agent as a
-request like any other.
+Either has to be the whole prompt: with more words, it goes to the model, which uses the
+skill as when you ask in words. In Codex, a handoff that is exactly a command or a
+phrase runs it, as Codex can't tell a handoff from what you typed; in the other agents
+it reaches the agent as a handoff like any other.
 
 ### What you get on each agent
 
-| Feature | Claude Code, mods on | Claude Code, mods off | Codex | pi | OpenCode | Skills only |
-| --- | --- | --- | --- | --- | --- | --- |
-| Connect by command | No model | Connects, then Claude answers | No model | No model | No model | None |
-| Status and disconnect by command | No model | Asks Claude | No model | No model | No model | None |
-| Phrases | No model | Reach Claude as a prompt | No model | No model | No model in its terminal | Reach the model as a prompt |
-| Asking in words | Claude uses the skill | Claude uses the skill | Codex uses the skill, with your approval | pi uses the skill | OpenCode uses the skill | Claude Code only |
-| A handoff arrives as | A prompt of its own | A monitor's notification | A queued message | A prompt of its own | A prompt, at the next step of any turn | A monitor's notification |
-| Handoff rules kept after `/clear` or a compaction | Yes | Yes | Yes | Yes | Yes | No: connect again |
-| Meeting in the status line, Blixel pane | Yes | No | No | No | No | No |
-| Runs before you connect | Nothing | Nothing | A 6 ms filter on each prompt and shell command | Nothing | Nothing | Nothing |
+With the plugin:
 
-Without the plugin there are no commands or phrases to catch, so everything goes through
-a normal model turn. That works in Claude Code, where the skill starts a monitor itself.
-Codex, pi and OpenCode need the plugin to receive handoffs, so with the skills alone they
-only get the `blixel` skill, as does any other agent.
+| Agent | A command or phrase | Asked in words | A handoff arrives as |
+| --- | --- | --- | --- |
+| Claude Code, mods on (terminal and desktop) | The mod answers, with no model step | Claude uses the skill; the mod takes over its `connect` and receives | Your prompt |
+| Claude Code, mods off | `/blixel:connect` asks Claude, which starts a Monitor; status and disconnect ask Claude; phrases reach Claude as a prompt | Claude uses the skill and starts a Monitor | A Monitor's notification, on one line |
+| Codex (terminal and desktop) | The hooks run it, and a connect receives within 2 seconds; Codex then says their answer in one short reply that runs nothing and asks no approval | Codex uses the skill, with two approvals | Your prompt, queued into the thread |
+| pi | The extension answers, with no model step | pi uses the skill; the extension takes over its `connect` and receives | Your prompt |
+| OpenCode (terminal and desktop) | The server plugin answers, with no model step; phrases in its terminal only | OpenCode uses the skill; the plugin takes over its `connect` and receives | Your prompt |
+
+With the skills alone, you ask in words. Measured with a real model and a plain "connect
+this session to my Blixel call", in each agent's default permission mode:
+
+| Agent | Receives through | Model steps | Approvals | Seconds to receiving | A handoff arrives as |
+| --- | --- | --- | --- | --- | --- |
+| Claude Code | A Monitor the model starts | 5 | 2: the skill, and the connect | About 50, most of it the approvals | A Monitor's notification, on one line |
+| Codex | `receive` the model starts outside the sandbox | 4 | 2: `connect` and `receive` outside the sandbox | About 40, most of it the approvals | Your prompt, queued into the thread |
+| OpenCode | `receive` the model starts as a background shell | 4 | 0 | About 13 | Your prompt |
+| pi | Nothing: it connects, then shows not receiving, and the agent tells you to install the package | — | — | — | — |
+
+Any other agent that reads `SKILL.md` skills and can run a background command gets the
+same route from the skill; one that can't connects and shows not receiving.
+
+| | Claude Code, mods on | Claude Code, mods off | Codex | pi | OpenCode | Skills only |
+| --- | --- | --- | --- | --- | --- | --- |
+| Meeting in the status line, Blixel pane | Yes | No | No | No | No | No |
+| Runs before you connect | Nothing | Nothing | A filter on each prompt | Nothing | Nothing | Nothing |
 
 ### How each piece works
 
@@ -102,30 +138,29 @@ only get the `blixel` skill, as does any other agent.
   turn.
 - **Plugin:** what you install to add commands and code to an agent.
 - **Mod (Claude Code):** the plugin's code, running inside the session. It answers
-  commands and phrases, follows the call, and submits handoffs as prompts.
+  commands and phrases, receives handoffs, and submits them as prompts.
 - **Monitor (Claude Code):** a background command whose output reaches the session line
   by line.
-- **Hooks (Codex):** commands Codex runs at set moments, once you trust them.
+- **Hooks (Codex):** commands Codex runs at set moments, once you trust them. The first
+  answers a command; the second, started by a connect, keeps `receive` running.
 - **Extension (pi):** the package's code, running inside pi.
 - **Server plugin (OpenCode):** the package's code, running in OpenCode's server, where
   sessions live whichever app shows them. A small terminal part catches phrases.
-- **Relay:** `blixel agent relay`, which follows the call and runs a small program for
-  each handoff. It exits by itself when the session goes.
 
-| Agent | Answers commands | Follows the call | Delivers a handoff |
+| Agent | Answers commands | Runs `blixel agent receive` | Delivers a handoff |
 | --- | --- | --- | --- |
 | Claude Code, mods on | The mod | The mod | Submits a prompt |
-| Claude Code, mods off | A hook and the command's `!` line | The plugin's monitor | Monitor notification |
-| Claude Code, skills only | The model | A Monitor the model starts | Monitor notification |
-| Codex | Hooks | A relay in an async hook | `codex queue` |
-| pi | The extension, or the model's own command | A relay the extension starts | `pi.sendUserMessage` |
-| OpenCode | The server plugin, or the model's own command | A relay the server plugin starts | `session.prompt` |
+| Claude Code, mods off or skills only | The model | A Monitor the model starts | Monitor notification |
+| Codex | The first hook, then the model in one line | The second hook | `codex queue` |
+| Codex, skills only | The model | A command the model starts outside the sandbox | `codex queue` |
+| pi | The extension, or the model's own command | The extension | `pi.sendUserMessage` |
+| OpenCode | The server plugin, or the model's own command | The server plugin | `session.prompt` |
+| OpenCode, skills only | The model | A background shell the model starts | OpenCode's server |
 
 ### Claude Code
 
 - **Handoffs and Esc:** after you stop a turn with Esc, Claude Code holds back new
-  prompts until you send a message, so a handoff waits for that, and the status line
-  says so.
+  prompts until you send a message, so a handoff waits for that, and Blixel says so.
 - **The pane:** `/blixel:status` opens the Blixel pane, as does connecting in the
   desktop app. It shows the meeting and the handoffs this session received, each with
   who sent it.
@@ -133,12 +168,16 @@ only get the `blixel` skill, as does any other agent.
   how a plugin stops a prompt, and nothing went wrong.
 - **Resuming:** a connection belongs to the process, so a session resumed with
   `claude --resume` connects again.
-- **Monitors off:** where plugin monitors don't run, as in the Claude desktop app, the
-  skill starts a Monitor, and starts it again each time Claude Code stops it after 30
-  minutes.
-- **No mod:** the session needs Claude Code monitors. Before Claude Code 2.1.310 they
-  don't run when `DISABLE_TELEMETRY` or `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC` is
-  set, or on Amazon Bedrock, Google Cloud's Agent Platform or Microsoft Foundry.
+- **Mods off, or the skills alone:** Claude starts a Monitor named "Blixel handoffs"
+  running `blixel agent receive --print-handoffs`. Claude Code stops it after 30
+  minutes, and Claude starts it again through the skill: in a permission mode that asks,
+  that is one "Use skill?" prompt each time, unless you chose not to be asked again for
+  connect-agent. A handoff arrives as a notification from the Monitor, with its line
+  breaks turned into spaces. `/clear` keeps the Monitor running. With the plugin, Claude
+  is reminded how to handle it after `/clear` or a compaction; with the skills alone,
+  ask it to connect again after a compaction.
+- **Disconnecting in words:** Claude may ask you to approve the command. With mods on,
+  Blixel shows a toast once it is disconnected.
 - **Sandbox:** with the Bash sandbox on, add the socket path that
   `blixel agent connect` reports to `sandbox.network.allowUnixSockets`.
 
@@ -146,23 +185,34 @@ If handoffs stop arriving, run `/blixel:connect` again.
 
 ### Codex
 
-- **Trust the hooks first:** without them no handoff arrives. Trust them when Codex asks
-  at start, or later in `/hooks` (**Review hooks** in the ChatGPT app), and again after
-  an update that changes them.
-- **Handoffs:** the hooks queue each one into the thread, and Codex runs it after any
-  turn in progress. It takes a few seconds to start.
-- **Asking in words:** Codex's sandbox blocks Blixel's local socket, so the first
-  attempt fails and takes a few more seconds. Approve running the CLI outside the
-  sandbox when Codex asks; if it can't ask, run `/permissions` and choose Approve for
-  me. If you take over 2 minutes to approve, connect again.
-- **Closing the terminal:** a plain `codex` session runs on Codex's shared app-server,
-  where a handoff still runs after you close its terminal. Disconnect before you close
-  it.
+- **Trust the hooks first:** without them, commands go to the model and connect as when
+  you ask in words. Trust them when Codex asks at start ("2 hooks are new or changed"),
+  or later in `/hooks` (**Review hooks** in the ChatGPT app). Codex asks again after any
+  update of the plugin; until then Codex desktop reports "plugin contents changed; hook
+  approval required".
+- **Commands:** the first hook runs the command and, for a connect, the second starts
+  receiving, before the model's turn. Codex then says the hooks' answer in one line, which takes a few
+  seconds and asks nothing. A command picked from the `$` list in Codex desktop works
+  the same as a typed one.
+- **Handoffs:** each one is queued into the thread as your prompt, line breaks kept,
+  and Codex runs it after any turn in progress. After you stop a turn with Esc, a
+  handoff waits for your next message.
+- **Asking in words:** Codex asks twice to run Blixel outside its sandbox, which blocks
+  Blixel's local socket: once to connect, once to receive. Approve both. If it can't
+  ask, run `/permissions` and choose Approve for me.
+- **Closing the window:** Codex sessions run on an app-server that outlives what shows
+  them: a plain `codex` session runs on Codex's shared app-server, and Codex desktop on
+  the ChatGPT app's. A connected thread still runs handoffs after you close its
+  terminal or window. Disconnect before you close it. `codex --no-daemon` ends the
+  connection when it quits.
 - **New conversations:** after `/new` or `/resume`, handoffs stay with the conversation
   that connected. `$blixel:status` says so, and connecting from the new one moves them.
 
 ### pi
 
+- **Install the package to receive:** pi can't run a background command, so with the
+  skills alone a session connects but shows not receiving, and the agent asks you to
+  install the package.
 - **Handoffs:** each arrives as a prompt, after any turn in progress. Esc puts one still
   waiting back in your editor unrun.
 - **New sessions:** quitting pi or starting a new session (`/new`, `/resume`, `/fork`)
@@ -171,9 +221,13 @@ If handoffs stop arriving, run `/blixel:connect` again.
 ### OpenCode
 
 - **Answers:** a command answers as a notice in the conversation. The model sees the
-  notice with your next prompt or handoff, and it starts no turn of its own.
+  notice with your next prompt or handoff, and it starts no turn of its own. OpenCode
+  desktop collapses the notices under an "Updates" row: open it to read them.
 - **Handoffs:** each arrives the way you typing would: it starts a turn, or joins the turn
   in progress at its next step.
+- **The skills alone** need OpenCode's background service, which its terminal and
+  desktop apps use by default. Under `opencode --standalone` or a plain
+  `opencode serve`, install the plugin.
 - **Closing the terminal:** the connection belongs to the session on OpenCode's server,
   which keeps running, so a handoff still runs after you close the terminal. Disconnect
   before you close it. With `opencode --standalone`, closing it ends the connection.
@@ -197,16 +251,20 @@ in its plugin's root changes, and a change to the mod must not do that:
 
 Installs are cached by `version`, so raise each `plugin.json` whose plugin changed, or
 its users keep the old one. Leave Codex's alone unless something in `codex/` changed,
-a skill's copy included: raising it makes Codex ask to trust the hooks again.
+a skill's copy included: each such update makes Codex ask its users to trust the hooks
+again, whatever the change.
 
 `hooks/register.tsx` is the mod; `claude plugin test .` runs its tests in `tests/`,
 and `claude plugin validate .` checks it the way Claude Code loads it.
 `tests/session-start.sh` tests the hook that runs after `/clear` or a compaction,
-`tests/connect.sh` the scripts behind `/blixel:connect`, `tests/claude-routes.sh` every
-Claude Code route against a planted PATH, `tests/codex-hooks.sh` Codex's hooks in
-`codex/`, `tests/pi.sh` the pi package in `pi/`, in real pi, and `tests/opencode.sh` the
-OpenCode package in `opencode/`, in real OpenCode. `codex/skills/` is a copy of `skills/`, as Codex drops symlinks when it installs a plugin: run `scripts/codex-skills.sh` after changing a
-skill, and the test fails if you don't. `codex/codex-skills/` holds what Codex alone
+`tests/claude-routes.sh` every Claude Code route against a planted PATH,
+`tests/references.sh` that every `provider` the CLI answers has its reference,
+`tests/deliver-codex.sh` and `tests/deliver-opencode.sh` the programs `receive` runs for
+each handoff with the skills alone, `tests/codex-hooks.sh` Codex's hooks in `codex/`,
+`tests/pi.sh` the pi package in `pi/`, in real pi, and `tests/opencode.sh` the OpenCode
+package in `opencode/` and the skills alone, in real OpenCode. `codex/skills/` is a copy
+of `skills/`, as Codex drops symlinks when it installs a plugin: run
+`scripts/codex-skills.sh` after changing a skill, and the test fails if you don't. `codex/codex-skills/` holds what Codex alone
 lists, the skills behind `$blixel:connect` and the rest. Hooks run outside Codex's
 sandbox, so they ignore the session's PATH and take the CLI inside Blixel.app, and each
 filter in `codex/hooks.json` names its commands by full path; `BLIXEL_HOOK_PATH`, set
@@ -215,12 +273,12 @@ what the skills have Codex run outside its sandbox: an approved bare `blixel` ru
 whatever PATH holds, so they name the CLI by full path, and a development build's has
 to be named to the session.
 
-Claude Code runs its hooks, the plugin's monitor and the mod outside its sandbox too.
+Claude Code runs its hooks and the mod outside its sandbox too.
 They source `skills/connect-agent/scripts/path.sh` or go through `app-cli` beside it,
 which ignore the session's PATH and take the CLI inside Blixel.app, in `/Applications`
 or `~/Applications`. To test a development build, start Claude Code with
 `BLIXEL_HOOK_PATH=<folder holding its blixel>:/usr/bin:/bin:/usr/sbin:/sbin`: that
-covers `/blixel:connect`, the monitor and the mod. The skill and its `allowed-tools`
+covers the hooks and the mod. The skill and its `allowed-tools`
 name the CLI by full path, so a development build's has to be named to the session
 there, and it asks before it runs. `tests/claude-routes.sh` fails if a route goes back
 to a bare `blixel`.
@@ -229,13 +287,14 @@ Every adapter lets the model do all a person can: asked in words, it connects, c
 disconnects. Commands and phrases are a shortcut past the model, never the only route.
 
 `skills/connect-agent/SKILL.md` holds what every agent shares, and no skill's text names
-an agent: each agent's part is in `references/`, the file a failed
-`blixel agent connect` names.
+an agent: each agent's part is in `references/`, in the file named for the
+`provider` that `blixel agent connect` answers. The CLI knows nothing of this
+repository: it names no file and suggests no agent's next step.
 
 A typed connect takes no model step, except in Codex: there the hook connects and the
 model says its answer in one reply that runs nothing, as Codex desktop shows a hook's
-answer nowhere else. Asked in words it takes the steps of reading the skill, and in
-Codex a failed try and its reference. Each release compares real connect times with
+answer nowhere else. Asked in words it takes the steps of reading the skill and its
+reference, then running `connect` and starting `receive`. Each release compares real connect times with
 the last one.
 
 `skills/blixel/scripts/blixel` and `skills/connect-agent/scripts/blixel` are the
