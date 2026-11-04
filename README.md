@@ -273,20 +273,20 @@ development build named by `BLIXEL_HOOK_PATH` and a scratch agent config:
   names the session with `PI_SESSION_ID`; a gate installed before or after Blixel's
   that blocks the model's connect leaves it unconnected; a handoff during a turn waits
   for it, and Esc puts it back in the editor; `/reload` keeps receiving with no connect.
-- OpenCode: each shell, two sessions' at once included, names its session with
-  `OPENCODE_SESSION_ID`; a denied or declined connect never runs; a handoff during a
-  turn reaches the model after it; the model is told of the skills; stopping the
-  server ends its receivers; an idle location unloaded and loaded again keeps
-  receiving.
+- OpenCode: the server lists the three commands and both skills; each shell, two
+  sessions' at once included, names its session with `OPENCODE_SESSION_ID`; a denied
+  or declined connect never runs; a connect's answer and the handoff after it take one
+  model turn; a handoff during a turn reaches the model after it; the model is told of
+  the skills; stopping the server ends its receivers; an idle location unloaded and
+  loaded again keeps receiving.
 - OpenCode's terminal: a phrase runs its command with no model turn, and in `!` shell
   mode runs as typed.
 - OpenCode with the skills alone: the model connects, starts `receive` with
   `deliver/opencode.sh` in a background shell of `opencode serve --service`, and a
   handoff arrives byte for byte.
 
-`codex/skills/` is a copy
-of `skills/`, as Codex drops symlinks when it installs a plugin: run
-`scripts/codex-skills.sh` after changing a skill, and the test fails if you don't. `codex/codex-skills/` holds what Codex alone
+`codex/skills/` is a copy of `skills/`, as Codex drops symlinks when it installs a plugin:
+run `scripts/codex-skills.sh` after changing a skill, and the test fails if you don't. `codex/codex-skills/` holds what Codex alone
 lists, the skills behind `$blixel:connect` and the rest. Hooks run outside Codex's
 sandbox, so they ignore the session's PATH and take the CLI inside Blixel.app, and each
 filter in `codex/hooks.json` names its commands by full path; `BLIXEL_HOOK_PATH`, set

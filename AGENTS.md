@@ -6,4 +6,4 @@
   Hermes. They run plugin code in-process against fakes of the agent's plugin API
   and a stand-in `blixel`, so results depend only on this repository.
 - Behaviour only a real agent shows is a manual check before a release, listed in
-  README's development section.
+  README under "Releasing".
