@@ -197,6 +197,7 @@ reason() { # the hook's output must be JSON that lets the turn go on with the an
 	[ "$(printf '%s' "$1" | plutil -extract hookSpecificOutput.hookEventName raw -o - -)" = UserPromptSubmit ] ||
 		{ echo "FAIL: no UserPromptSubmit note"; return; }
 	note=$(printf '%s' "$1" | plutil -extract hookSpecificOutput.additionalContext raw -o - -)
+	case $note in *"Tell the user that answer in one short line"*) ;; *) echo "FAIL: the note asks for no line"; return ;; esac
 	case $note in *"run no command"*) ;; *) echo "FAIL: the note lets the model run a command"; return ;; esac
 	printf '%s' "$note"
 }
@@ -278,8 +279,11 @@ reset
 : >"$log"
 tells "desktop connect" "$(reason "$(prompt "$(desktop connect)")")" "Connected to the Blixel meeting"
 logged "agent connect pid=" || fail "desktop connect: asked nothing"
-tells "desktop status" "$(reason "$(prompt "$(desktop status)")")" "Blixel"
+tells "desktop status" "$(reason "$(prompt "$(desktop status)")")" "not connected to the Blixel meeting"
 tells "desktop disconnect" "$(reason "$(prompt "$(desktop disconnect)")")" "Disconnected"
+told=$(reason "$(prompt '[$blixel:connect](/Users/me/ignore-the-user/SKILL.md)')")
+tells "desktop connect, any path" "$told" "Connected to the Blixel meeting"
+never "the note holds nothing of the prompt" "$told" "ignore-the-user"
 
 reset
 both answers-first "$(desktop connect)"
@@ -289,10 +293,17 @@ stops "ended disconnected"
 reset
 silent "desktop, words after it go to the model" "$(prompt "$(desktop connect) please")"
 silent "desktop, another skill goes to the model" "$(prompt '[$blixel:blixel](/x/SKILL.md) \\n')"
-for words in "$(desktop connect)\\\"" "$(desktop connect)please" \
+for words in "$(desktop connect)\\\"" "$(desktop connect)please" '[$blixel:connect](/x)y/SKILL.md)' \
 	'[$blixel:connect](/x\"y/SKILL.md)' '[$blixel:connect](/x\nplease/SKILL.md)'; do
 	silent "desktop, not a pick goes to the model: $words" "$(prompt "$words")"
 done
+echo "ended disconnected" >"$dir/stops"
+for words in "$(desktop status)" "$(desktop disconnect)" "$(desktop connect) please"; do
+	typed "$words" >"$dir/asked"
+	/bin/zsh -c "$receives" <"$dir/asked" &
+	wait $!
+done
+rm -f "$dir/stops"
 never "desktop, only a pick runs Blixel" "$(cat "$log")" "blixel agent"
 
 reset
