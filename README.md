@@ -20,14 +20,17 @@ Two things for coding agents on a Mac with [Blixel](https://blixel.app):
 | Agent | Install |
 | --- | --- |
 | Claude Code | `claude plugin marketplace add blixel-app/skills`, then `claude plugin install blixel@blixel-app` |
+| Claude desktop app | In the **Code** tab: **+** → **Add plugins** → **Add marketplace** → **Add from a repository**, enter `blixel-app/skills`, then install **blixel** |
 | Codex | `codex plugin marketplace add blixel-app/skills`, then `codex plugin add blixel@blixel-app` |
+| Codex in the ChatGPT app | **Plugins** → **Add** → **Add a marketplace**, enter `blixel-app/skills`, then install **Blixel** |
 | pi | `pi install git:github.com/blixel-app/skills` |
 | OpenCode 2 | `opencode plugin add 'git+https://github.com/blixel-app/skills.git'` |
 | Any other agent, or skills only | `npx skills add blixel-app/skills`, or copy `skills/blixel` into the agent's skills folder |
 
 Installing is the only setup: the plugin and the skills find Blixel's `blixel` command
-themselves. In Codex, also trust the plugin's hooks, as [below](#codex). In OpenCode,
-restart its background service so it loads the plugin.
+themselves. Start a new session after installing. In Codex, also trust the plugin's
+two hooks: run `/hooks`, or click **Review hooks** in the ChatGPT app, as
+[below](#codex). In OpenCode, restart its background service so it loads the plugin.
 
 The CLI needs Blixel 0.12 or later. Connecting a session needs 0.17 or later, in
 `/Applications` or `~/Applications`.
