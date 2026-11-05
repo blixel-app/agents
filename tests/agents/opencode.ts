@@ -17,11 +17,15 @@ type Command = { name: string; description: string; execute: (input: { sessionID
 type Ran = { output: { output: string; exit: number; status: string }; content: { type: 'text'; text: string }[]; metadata: object }
 type Tool = { id: string; execute: (input: Record<string, unknown>, context: { sessionID: string }) => Promise<Ran> }
 type Notice = { sessionID: string; text: string; description?: string; resume?: boolean }
+type PromptEvent = { sessionID: string; prompt: { text: string }; metadata?: Record<string, unknown> }
 
 /**
  * An OpenCode 2.2.5 server as a plugin's `setup` sees it (the plugin context in the
  * binary's embedded JS), only what the Blixel plugin uses: skill, command and tool
- * editors through `transform`, and the session's `prompt` and `synthetic`. A command's
+ * editors through `transform`, the session's `prompt` and `synthetic`, and its `prompt`
+ * hook, which edits each prompt before the model reads it: what a client sends and what
+ * the plugin itself submits alike. The desktop and web apps send what was typed with
+ * `metadata.displayText`, which they show in its place. A command's
  * `execute` gets the session and the text after its name. The shell tool asks
  * permission inside its own `execute`, before the command runs: `deny` throws, `ask`
  * waits for `reply`, and a rejected reply throws.
@@ -30,6 +34,7 @@ export class OpenCode {
   readonly skills = new Map<string, { name: string; description: string; content: string; path: string }>()
   readonly commands = new Map<string, Command>()
   readonly tools = new Map<string, Tool>()
+  private hooks: ((event: PromptEvent) => Promise<void>)[] = []
   /** What reached each session's model as the user's prompt. */
   readonly prompts: { sessionID: string; text: string }[] = []
   /** What each session showed with no model turn, or started one with. */
@@ -69,9 +74,13 @@ export class OpenCode {
     session: {
       prompt: async (input: { sessionID: string; text: string }) => {
         await this.promptAnswer()
-        this.prompts.push(input)
+        await this.enter(input.sessionID, input.text)
       },
       synthetic: async (input: Notice) => void this.notices.push(input),
+      hook: async (name: string, hook: (event: PromptEvent) => Promise<void>) => {
+        if (name === 'prompt') this.hooks.push(hook)
+        return { dispose: () => {} }
+      },
     },
   }
 
@@ -87,6 +96,11 @@ export class OpenCode {
   /** The person ran `/<name> <text>` in the session. */
   async command(sessionID: string, name: string, text = '') {
     await this.commands.get(name)!.execute({ sessionID, prompt: { text } })
+  }
+
+  /** The person typed the text in the desktop app and sent it. */
+  async typed(sessionID: string, text: string) {
+    await this.enter(sessionID, text, { displayText: text })
   }
 
   /** What the session showed last. */
@@ -115,6 +129,12 @@ export class OpenCode {
 
   get asking() {
     return this.asked !== undefined
+  }
+
+  private async enter(sessionID: string, text: string, metadata?: Record<string, unknown>) {
+    const event: PromptEvent = { sessionID, prompt: { text }, metadata }
+    for (const hook of this.hooks) await hook(event)
+    this.prompts.push({ sessionID, text: event.prompt.text })
   }
 
   private async run(input: Record<string, unknown>, context: Context): Promise<Ran> {

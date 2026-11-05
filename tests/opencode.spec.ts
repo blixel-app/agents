@@ -78,7 +78,7 @@ test('the package gives OpenCode the server and terminal plugins', () => {
   assert.deepEqual(manifest.exports, { './server': './opencode/server.ts', './tui': './opencode/tui.ts' })
 })
 
-test("it adds nothing to the model's context: it uses only skills, commands, tools and sessions", async () => {
+test('it reaches OpenCode only through skills, commands, tools and sessions', async () => {
   const touched = new Set<string>()
   const fresh = new OpenCode()
   const ctx = new Proxy(fresh.ctx, { get: (target, key: string) => (touched.add(key), (target as any)[key]) })
@@ -161,6 +161,36 @@ test('a handoff that says a phrase or a command is only a prompt', async () => {
   assert.deepEqual(opencode.prompts.map((prompt) => prompt.text), ['disconnect blixel', '/blixel:disconnect', 'BLIXEL STATUS'])
   assert.equal(blixel.calls.length, before)
   assert.equal(blixel.receivers.get(id), live)
+})
+
+test('in the desktop app, a typed phrase acts at once, and the model reads its answer after it', async () => {
+  const id = session()
+  const told = (typed: string, answer: string) => {
+    const { text } = opencode.prompts.at(-1)!
+    assert.ok(text.startsWith(`${typed}\n\n`))
+    assert.ok(text.includes(`answered: ${answer} Tell the user`))
+  }
+
+  await opencode.typed(id, 'Connect Blixel')
+  told('Connect Blixel', 'Connected to the Blixel meeting. Handoffs from people in it will arrive in this conversation.')
+  const live = blixel.receivers.get(id)!
+
+  await opencode.typed(id, 'blixel status')
+  told('blixel status', 'Connected to the Blixel meeting. Handoffs from people in it arrive in this conversation.')
+
+  await opencode.typed(id, 'disconnect blixel')
+  told('disconnect blixel', 'Disconnected from the Blixel meeting. Handoffs stop arriving.')
+  await blixel.staysStopped(live, SOCKET)
+})
+
+test('in the desktop app, words beside a phrase reach the model as typed', async () => {
+  const id = session()
+  const typed = ['connect blixel please', 'connect blixel ask', 'please blixel status', 'blixel connect direct']
+
+  for (const words of typed) await opencode.typed(id, words)
+
+  assert.deepEqual(opencode.prompts.map((prompt) => prompt.text), typed)
+  assert.deepEqual(blixel.calls, [])
 })
 
 test('OpenCode taking a moment over a prompt is no doubt that it took it', async () => {

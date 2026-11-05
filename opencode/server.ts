@@ -18,12 +18,15 @@ const RECEIVE = ["agent", "receive", "--deliver-with", path.join(HERE, "submit.s
 const RUNS = /(?:^|[\s;&|(/])blixel["']? agent connect\b/;
 // How long a connect waits for its receiver to attach before it answers.
 const RECEIVING_MS = 5_000;
+// The prompts that act at once, the same as the TUI plugin reads them.
+const PHRASE = /^(?:blixel[ :](connect|disconnect|status)|(connect|disconnect|status) blixel)$/;
 const RECEIVERS = Symbol.for("blixel.opencode.receivers");
 const LEAVING = Symbol.for("blixel.opencode.leaving");
 
 type Verb = "connect" | "disconnect" | "status";
 type Failure = { code?: string; message?: string; hint?: string };
 type Answer = { data?: any; error?: Failure };
+type Prompt = { sessionID: string; prompt: { text: string }; metadata?: { displayText?: unknown } };
 type Receiver = {
 	child?: ChildProcess;
 	server: net.Server;
@@ -288,6 +291,19 @@ export default Plugin.define({
 					},
 				});
 			}
+		});
+
+		// The desktop and web apps send a phrase as a prompt, which no plugin can stop, and
+		// show its `displayText` in place of what the model reads: the phrase acts here, and
+		// the model is told to say the answer. A handoff has no `displayText`, so one saying
+		// a phrase runs nothing.
+		await ctx.session.hook("prompt", async (event: Prompt) => {
+			if (typeof event.metadata?.displayText !== "string") return;
+			const said = PHRASE.exec(event.prompt.text.trim().toLowerCase());
+			const verb = (said?.[1] ?? said?.[2]) as Verb | undefined;
+			if (!verb) return;
+			const text = await answers[verb](event.sessionID, "");
+			event.prompt.text += `\n\nThe Blixel plugin already did what this prompt asks, and answered: ${text} Tell the user that answer in one short line, and run no tool or skill.`;
 		});
 
 		// The shell tool asks for permission inside `execute`, so only a command that was

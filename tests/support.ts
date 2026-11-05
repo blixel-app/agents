@@ -167,7 +167,8 @@ export function stage(on: On, setup: Setup = {}) {
     submitted.push(e.text)
     bare.push(e.origin.kind === 'plugin' && e.origin.asUser === true)
     const drop = await setup.submit?.(e.text)
-    return drop === undefined ? { text: e.text } : { drop }
+    if (drop !== undefined) return { drop }
+    return e.context === undefined ? { text: e.text } : { text: e.text, context: e.context }
   })
   on('process.run', async ($, e) => {
     const read = { stderr: '', isStdoutTruncated: false, isStderrTruncated: false }

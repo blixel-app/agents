@@ -371,6 +371,35 @@ test('typed phrases connect, check and disconnect with no turn', async ($, on) =
   expect(stub.submitted).toEqual([])
 })
 
+test('in the desktop app a typed phrase acts at once and its answer reaches the model to say', async ($, on) => {
+  const cli = connectedCli()
+  const stub = stage(on, { cli: command => cli.answer(command), surfaces: ['desktop'] })
+  await start($)
+
+  const told = (answer: string) => ({ text: expect.any(String), context: [expect.stringContaining(answer)] })
+  expect(await settled(stub, typed($, 'Connect Blixel'))).toEqual(told('Connected to the Blixel'))
+  await stub.settle()
+  expect(cli.calls).toContain('connect')
+  expect(await typed($, 'blixel status')).toEqual(told('connected to the Blixel'))
+  expect(await typed($, 'blixel:disconnect')).toEqual(told('Disconnected from the'))
+
+  expect(cli.calls).toContain('disconnect')
+  expect(stub.submitted).toEqual(['Connect Blixel', 'blixel status', 'blixel:disconnect'])
+})
+
+test("in the desktop app a phrase acts as a session's first prompt, past the note the app puts in it", async ($, on) => {
+  const cli = connectedCli()
+  const stub = stage(on, { cli: command => cli.answer(command), surfaces: ['desktop'] })
+  await start($)
+
+  const first = '<system-reminder>\nThe user started this session in a scratch folder.\n</system-reminder>\n\nconnect blixel'
+  const entered = await settled(stub, typed($, first))
+  await stub.settle()
+
+  expect(entered).toEqual({ text: first, context: [expect.stringContaining('Connected to the Blixel')] })
+  expect(cli.calls).toContain('connect')
+})
+
 test('a typed phrase leaves the prompt box empty', async ($, on) => {
   const cli = connectedCli()
   const stub = stage(on, { cli: command => cli.answer(command) })

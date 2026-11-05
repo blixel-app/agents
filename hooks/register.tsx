@@ -25,6 +25,8 @@ type Session = {
 const PANE = 'blixel'
 // The prompts that act with no model, the same as Codex's hooks read them.
 const PHRASE = /^(?:blixel[ :](connect|disconnect|status)|(connect|disconnect|status) blixel)$/
+// The desktop app puts a note of its own in a new session's first prompt.
+const REMINDER = /<system-reminder>[\s\S]*?<\/system-reminder>/g
 const HISTORY = 20
 const EMPTY: Panel = {
   app: 'unknown',
@@ -595,7 +597,7 @@ export const register: Register = on => {
   // Only what the person typed: someone in the call saying a phrase must not run it.
   on('prompt.submit', async ($, e, next) => {
     const typed = e.origin.kind === 'composer' || e.origin.kind === 'bridge'
-    const said = typed && !e.command ? PHRASE.exec(e.text.trim().toLowerCase()) : null
+    const said = typed && !e.command ? PHRASE.exec(e.text.replace(REMINDER, '').trim().toLowerCase()) : null
     const verb = said?.[1] ?? said?.[2]
     if (!verb) return next(e)
     if (!(await session?.ready()) || !session) return next(e)
@@ -605,6 +607,12 @@ export const register: Register = on => {
       status: () => status($, session),
     }
     const text = await answers[verb as keyof typeof answers]()
+    // The desktop app shows a dropped prompt as "Prompt blocked by hook", so there the
+    // prompt enters and the model says the answer.
+    if (!(await $.session.surfaces()).includes('terminal')) {
+      const note = `The Blixel plugin already did what this prompt asks, and answered: ${text} Tell the user that answer in one short line, and run no tool or skill.`
+      return next({ ...e, context: [...(e.context ?? []), note] })
+    }
     // The only way not to enter: Claude Code prefixes the answer with "Prompt dropped
     // by a hook:" and puts the text back in the box. `$.command.run` is refused here.
     $.clock.after(50, async () => {

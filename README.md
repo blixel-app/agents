@@ -97,8 +97,9 @@ words. Two ways to say it:
   no plugin commands, so there it is `$blixel:connect` and so on: type `$con`, then
   Enter twice, or pick it from the `$` list in Codex desktop.
 - **A phrase, as a whole prompt in any case:** `connect blixel`, `blixel connect` or
-  `blixel:connect`, and the same with `status` and `disconnect`. In OpenCode this works
-  in its terminal, not in its web or desktop apps.
+  `blixel:connect`, and the same with `status` and `disconnect`. In OpenCode's web and
+  desktop apps, and in Claude Code's desktop app, a phrase acts at once and the agent
+  then says its answer in one short reply.
 
 Either has to be the whole prompt: with more words, it goes to the model, which uses the
 skill as when you ask in words. In Codex, a handoff that is exactly a command or a
@@ -111,11 +112,11 @@ With the plugin:
 
 | Agent | A command or phrase | Asked in words | A handoff arrives as |
 | --- | --- | --- | --- |
-| Claude Code, mods on (terminal and desktop) | The mod answers, with no model step | Claude uses the skill; the mod takes over its `connect` and receives | Your prompt |
+| Claude Code, mods on (terminal and desktop) | The mod answers, with no model step; a phrase in the desktop app acts at once, then Claude says its answer in one short reply | Claude uses the skill; the mod takes over its `connect` and receives | Your prompt |
 | Claude Code, mods off | `/blixel:connect` asks Claude, which starts a Monitor; status and disconnect ask Claude; phrases reach Claude as a prompt | Claude uses the skill and starts a Monitor | A Monitor's notification, on one line |
 | Codex (terminal and desktop) | The hooks run it, and a connect receives within 2 seconds; Codex then says their answer in one short reply that runs nothing and asks no approval | Codex uses the skill, with two approvals | Your prompt, queued into the thread |
 | pi | The extension answers, with no model step | pi uses the skill; the extension takes over its `connect` and receives | Your prompt |
-| OpenCode (terminal and desktop) | The server plugin answers, with no model step; phrases in its terminal only | OpenCode uses the skill; the plugin takes over its `connect` and receives | Your prompt |
+| OpenCode (terminal and desktop) | The server plugin answers, with no model step; a phrase in the web or desktop app acts at once, then OpenCode says its answer in one short reply | OpenCode uses the skill; the plugin takes over its `connect` and receives | Your prompt |
 
 With the skills alone, you ask in words. Measured with a real model and a plain "connect
 this session to my Blixel call", in each agent's default permission mode:
@@ -167,8 +168,11 @@ same route from the skill; one that can't connects and shows not receiving.
 - **The pane:** `/blixel:status` opens the Blixel pane, as does connecting in the
   desktop app. It shows the meeting and the handoffs this session received, each with
   who sent it.
-- **Phrases:** Claude Code shows the answer as "Prompt dropped by a hook: …". That is
-  how a plugin stops a prompt, and nothing went wrong.
+- **Phrases:** in the terminal, Claude Code shows the answer as "Prompt dropped by a
+  hook: …". That is how a plugin stops a prompt, and nothing went wrong. The desktop app
+  shows a stopped prompt as a warning, so there the mod acts on the phrase and lets it
+  through, and Claude says the answer in one short reply. A command answers with no
+  reply in both.
 - **Resuming:** a connection belongs to the process, so a session resumed with
   `claude --resume` connects again.
 - **Mods off, or the skills alone:** Claude starts a Monitor named "Blixel handoffs"
@@ -282,8 +286,14 @@ development build named by `BLIXEL_HOOK_PATH` and a scratch agent config:
   model turn; a handoff during a turn reaches the model after it; the model is told of
   the skills; stopping the server ends its receivers; an idle location unloaded and
   loaded again keeps receiving.
+- Claude Code desktop: a phrase connects, checks or disconnects before the model
+  starts, and Claude says the answer in one line, using no tool or skill and showing no
+  "blocked by hook" warning.
 - OpenCode's terminal: a phrase runs its command with no model turn, and in `!` shell
   mode runs as typed.
+- OpenCode desktop: a phrase connects, checks or disconnects before the model starts;
+  the chat shows the phrase as typed, and the model says the answer in one line, using
+  no tool or skill.
 - OpenCode with the skills alone: the model connects, starts `receive` with
   `deliver/opencode.sh` in a background shell of `opencode serve --service`, and a
   handoff arrives byte for byte.
