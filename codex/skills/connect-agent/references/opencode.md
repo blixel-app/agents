@@ -17,7 +17,7 @@ OpenCode resumes you when it ends: after an `ended` event, do nothing; otherwise
 start it again.
 
 A session started with `opencode --standalone` has no server to prompt: it needs the
-Blixel plugin, `opencode plugin add 'git+https://github.com/blixel-app/skills.git'`.
+Blixel plugin, `opencode plugin add 'git+https://github.com/blixel-app/agents.git'`.
 
 ## Status and disconnect
 

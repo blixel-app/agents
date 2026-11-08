@@ -4,7 +4,7 @@
   "private": true,
   "description": "Rooms, meeting chat, window sharing, transcripts, hooks and agent handoffs through the blixel CLI.",
   "homepage": "https://blixel.app",
-  "repository": "https://github.com/blixel-app/skills",
+  "repository": "https://github.com/blixel-app/agents",
   "license": "MIT",
   "keywords": [
     "pi-package"
