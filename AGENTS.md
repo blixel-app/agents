@@ -1,4 +1,4 @@
-# Blixel skills — agent rules
+# Blixel for coding agents — agent rules
 
 ## Tests
 
